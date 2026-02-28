@@ -11,6 +11,31 @@ A DevOps CLI tool that uses an Azure Service Principal to examine Azure subscrip
 - Go 1.21+
 - Azure Service Principal with **Reader** role on the target subscription
 
+## Installation
+
+Download the latest binary from [Releases](https://github.com/chanbistec/btg-devops/releases).
+
+| Platform | Binary |
+|----------|--------|
+| macOS (Apple Silicon) | `btg-devops-darwin-arm64` |
+| macOS (Intel) | `btg-devops-darwin-amd64` |
+| Windows (x64) | `btg-devops-windows-amd64.exe` |
+| Windows (ARM) | `btg-devops-windows-arm64.exe` |
+| Linux (x64) | `btg-devops-linux-amd64` |
+| Linux (ARM) | `btg-devops-linux-arm64` |
+
+### macOS Note
+
+The binaries are not signed with an Apple Developer certificate. After downloading:
+
+```bash
+# Remove quarantine flag
+xattr -d com.apple.quarantine btg-devops-darwin-arm64
+chmod +x btg-devops-darwin-arm64
+```
+
+Or right-click the file in Finder → Open → click "Open" on the Gatekeeper prompt.
+
 ## Setup
 
 ### 1. Set environment variables
