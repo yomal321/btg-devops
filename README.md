@@ -7,6 +7,7 @@ A DevOps CLI tool that uses an Azure Service Principal to examine Azure subscrip
 - **App Service Traffic Analysis** — Analyzes Azure App Service network traffic over the last 14 days to identify idle/unused apps, helping reduce costs.
 - **IAM Role Assignment Analysis** — Examines RBAC role assignments for overprivileged, orphaned, duplicate, and misconfigured assignments.
 - **Storage Account Analysis** — Checks Storage Accounts for public access, HTTPS enforcement, lifecycle policies, TLS version, network rules, and encryption settings.
+- **NSG Analysis** — Analyzes Network Security Groups for overly permissive rules, open management ports (RDP/SSH/SQL) to the internet, and unassociated NSGs.
 
 ## Prerequisites
 
@@ -84,6 +85,19 @@ btg-devops analyze storage --resource-group my-rg
 
 # JSON output
 btg-devops analyze storage --output json
+```
+
+### Analyze Network Security Groups
+
+```bash
+# Analyze all NSGs
+btg-devops analyze nsg
+
+# Filter by resource group
+btg-devops analyze nsg --resource-group my-rg
+
+# JSON output
+btg-devops analyze nsg --output json
 ```
 
 ### Output (App Service Traffic)
