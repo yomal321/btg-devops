@@ -9,3 +9,4 @@ Each feature added to the CLI is documented here with requirements, checks perfo
 | 003 | [Storage Account Analysis](003-storage-analysis.md) | `analyze storage` | v0.3.0 |
 | 004 | [NSG Analysis](004-nsg-analysis.md) | `analyze nsg` | v0.4.0 |
 | 005 | [Container Registry (ACR) Analysis](005-acr-analysis.md) | `analyze acr` | v0.5.0 |
+| 006 | [Cosmos DB Analysis](006-cosmosdb-analysis.md) | `analyze cosmosdb` | v0.6.0 |

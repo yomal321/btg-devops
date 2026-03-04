@@ -9,6 +9,7 @@ A DevOps CLI tool that uses an Azure Service Principal to examine Azure subscrip
 - **Storage Account Analysis** — Checks Storage Accounts for public access, HTTPS enforcement, lifecycle policies, TLS version, network rules, and encryption settings.
 - **NSG Analysis** — Analyzes Network Security Groups for overly permissive rules, open management ports (RDP/SSH/SQL) to the internet, and unassociated NSGs.
 - **Container Registry (ACR) Analysis** — Checks Container Registries for admin account usage, public access, missing private endpoints, retention policies, encryption, and SKU recommendations.
+- **Cosmos DB Analysis** — Analyzes Cosmos DB accounts for throughput optimization (manual vs autoscale), backup policies, network security, consistency settings, and multi-region configuration.
 
 ## Prerequisites
 
@@ -112,6 +113,19 @@ btg-devops analyze acr --resource-group my-rg
 
 # JSON output
 btg-devops analyze acr --output json
+```
+
+### Analyze Cosmos DB
+
+```bash
+# Analyze all Cosmos DB accounts
+btg-devops analyze cosmosdb
+
+# Filter by resource group
+btg-devops analyze cosmosdb --resource-group my-rg
+
+# JSON output
+btg-devops analyze cosmosdb --output json
 ```
 
 ### Output (App Service Traffic)
