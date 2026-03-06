@@ -11,6 +11,7 @@ A DevOps CLI tool that uses an Azure Service Principal to examine Azure subscrip
 - **Container Registry (ACR) Analysis** — Checks Container Registries for admin account usage, public access, missing private endpoints, retention policies, encryption, and SKU recommendations.
 - **Cosmos DB Analysis** — Analyzes Cosmos DB accounts for throughput optimization (manual vs autoscale), backup policies, network security, consistency settings, and multi-region configuration.
 - **Key Vault Analysis** — Checks Key Vaults for access model (RBAC vs access policies), soft-delete, purge protection, network access, expired/expiring secrets and keys, and permission hygiene.
+- **Azure Functions Analysis** — Analyzes Function Apps for runtime version currency, always-on configuration, HTTPS enforcement, managed identity, TLS settings, remote debugging, and plan optimization.
 
 ## Prerequisites
 
@@ -140,6 +141,19 @@ btg-devops analyze keyvault --resource-group my-rg
 
 # JSON output
 btg-devops analyze keyvault --output json
+```
+
+### Analyze Azure Functions
+
+```bash
+# Analyze all Function Apps
+btg-devops analyze functions
+
+# Filter by resource group
+btg-devops analyze functions --resource-group my-rg
+
+# JSON output
+btg-devops analyze functions --output json
 ```
 
 ### Output (App Service Traffic)
