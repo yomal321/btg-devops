@@ -12,6 +12,7 @@ A DevOps CLI tool that uses an Azure Service Principal to examine Azure subscrip
 - **Cosmos DB Analysis** — Analyzes Cosmos DB accounts for throughput optimization (manual vs autoscale), backup policies, network security, consistency settings, and multi-region configuration.
 - **Key Vault Analysis** — Checks Key Vaults for access model (RBAC vs access policies), soft-delete, purge protection, network access, expired/expiring secrets and keys, and permission hygiene.
 - **Azure Functions Analysis** — Analyzes Function Apps for runtime version currency, always-on configuration, HTTPS enforcement, managed identity, TLS settings, remote debugging, and plan optimization.
+- **Public IP Address Analysis** — Identifies unused/unattached Public IPs wasting money, Basic SKU deprecation, DDoS protection gaps, and zone redundancy recommendations.
 
 ## Prerequisites
 
@@ -154,6 +155,19 @@ btg-devops analyze functions --resource-group my-rg
 
 # JSON output
 btg-devops analyze functions --output json
+```
+
+### Analyze Public IP Addresses
+
+```bash
+# Analyze all Public IPs
+btg-devops analyze publicip
+
+# Filter by resource group
+btg-devops analyze publicip --resource-group my-rg
+
+# JSON output
+btg-devops analyze publicip --output json
 ```
 
 ### Output (App Service Traffic)
