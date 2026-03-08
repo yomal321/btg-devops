@@ -13,6 +13,7 @@ A DevOps CLI tool that uses an Azure Service Principal to examine Azure subscrip
 - **Key Vault Analysis** — Checks Key Vaults for access model (RBAC vs access policies), soft-delete, purge protection, network access, expired/expiring secrets and keys, and permission hygiene.
 - **Azure Functions Analysis** — Analyzes Function Apps for runtime version currency, always-on configuration, HTTPS enforcement, managed identity, TLS settings, remote debugging, and plan optimization.
 - **Public IP Address Analysis** — Identifies unused/unattached Public IPs wasting money, Basic SKU deprecation, DDoS protection gaps, and zone redundancy recommendations.
+- **App Service Plan Analysis** — Detects empty plans wasting money, over-provisioned workers based on CPU/memory metrics, SKU right-sizing opportunities, and autoscale recommendations.
 
 ## Prerequisites
 
@@ -168,6 +169,19 @@ btg-devops analyze publicip --resource-group my-rg
 
 # JSON output
 btg-devops analyze publicip --output json
+```
+
+### Analyze App Service Plans
+
+```bash
+# Analyze all App Service Plans
+btg-devops analyze appserviceplan
+
+# Filter by resource group
+btg-devops analyze appserviceplan --resource-group my-rg
+
+# JSON output
+btg-devops analyze appserviceplan --output json
 ```
 
 ### Output (App Service Traffic)
