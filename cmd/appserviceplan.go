@@ -160,8 +160,17 @@ func analyzeASPs(ctx context.Context, plans []*armappservice.Plan, webClient *ar
 		report.Summary.BySKU[skuName]++
 
 		// Check 1: Empty plan (no apps)
+		// The subscription-level list API often does not populate NumberOfSites,
+		// so we fetch each plan individually to get the full properties.
 		appCount := 0
-		if plan.Properties != nil && plan.Properties.NumberOfSites != nil {
+		if rg != "" && name != "" {
+			fullPlan, err := planClient.Get(ctx, rg, name, nil)
+			if err == nil && fullPlan.Properties != nil && fullPlan.Properties.NumberOfSites != nil {
+				appCount = int(*fullPlan.Properties.NumberOfSites)
+			}
+		}
+		// Fallback to list data if Get failed
+		if appCount == 0 && plan.Properties != nil && plan.Properties.NumberOfSites != nil {
 			appCount = int(*plan.Properties.NumberOfSites)
 		}
 		if appCount == 0 {
