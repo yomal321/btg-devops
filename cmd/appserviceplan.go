@@ -111,7 +111,27 @@ func runAppServicePlan(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Found %d App Service Plans. Analyzing...\n", len(plans))
 
-	report := analyzeASPs(ctx, plans, webClient, planClient, metricsClient)
+	// Fetch all web apps and build a map of plan ID -> app count.
+	// The subscription-level plan list API may not populate NumberOfSites,
+	// so we count apps ourselves as the source of truth.
+	fmt.Fprintf(os.Stderr, "Fetching Web Apps to count apps per plan...\n")
+	planAppCount := map[string]int{} // lowercased plan resource ID -> count
+	webPager := webClient.NewListPager(nil)
+	for webPager.More() {
+		page, err := webPager.NextPage(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not list web apps: %v\n", err)
+			break
+		}
+		for _, app := range page.Value {
+			if app.Properties != nil && app.Properties.ServerFarmID != nil {
+				planID := strings.ToLower(*app.Properties.ServerFarmID)
+				planAppCount[planID]++
+			}
+		}
+	}
+
+	report := analyzeASPs(ctx, plans, planAppCount, webClient, planClient, metricsClient)
 
 	switch flagOutput {
 	case "json":
@@ -135,7 +155,7 @@ var skuMonthlyCostUSD = map[string]float64{
 	"I1V2": 298.00, "I2V2": 596.00, "I3V2": 1192.00,
 }
 
-func analyzeASPs(ctx context.Context, plans []*armappservice.Plan, webClient *armappservice.WebAppsClient, planClient *armappservice.PlansClient, metricsClient *armmonitor.MetricsClient) ASPReport {
+func analyzeASPs(ctx context.Context, plans []*armappservice.Plan, planAppCount map[string]int, webClient *armappservice.WebAppsClient, planClient *armappservice.PlansClient, metricsClient *armmonitor.MetricsClient) ASPReport {
 	report := ASPReport{
 		Summary: ASPSummary{
 			TotalPlans:         len(plans),
@@ -160,16 +180,14 @@ func analyzeASPs(ctx context.Context, plans []*armappservice.Plan, webClient *ar
 		report.Summary.BySKU[skuName]++
 
 		// Check 1: Empty plan (no apps)
-		// The subscription-level list API often does not populate NumberOfSites,
-		// so we fetch each plan individually to get the full properties.
+		// Use the pre-built web app count map (single list call) as source of truth.
+		// The subscription-level plan list API often returns NumberOfSites as 0
+		// even for plans with apps deployed, and per-plan Get calls are N+1.
 		appCount := 0
-		if rg != "" && name != "" {
-			fullPlan, err := planClient.Get(ctx, rg, name, nil)
-			if err == nil && fullPlan.Properties != nil && fullPlan.Properties.NumberOfSites != nil {
-				appCount = int(*fullPlan.Properties.NumberOfSites)
-			}
+		if plan.ID != nil {
+			appCount = planAppCount[strings.ToLower(*plan.ID)]
 		}
-		// Fallback to list data if Get failed
+		// Fallback to NumberOfSites from the plan properties
 		if appCount == 0 && plan.Properties != nil && plan.Properties.NumberOfSites != nil {
 			appCount = int(*plan.Properties.NumberOfSites)
 		}
