@@ -14,6 +14,7 @@ A DevOps CLI tool that uses an Azure Service Principal to examine Azure subscrip
 - **Azure Functions Analysis** — Analyzes Function Apps for runtime version currency, always-on configuration, HTTPS enforcement, managed identity, TLS settings, remote debugging, and plan optimization.
 - **Public IP Address Analysis** — Identifies unused/unattached Public IPs wasting money, Basic SKU deprecation, DDoS protection gaps, and zone redundancy recommendations.
 - **App Service Plan Analysis** — Detects empty plans wasting money, over-provisioned workers based on CPU/memory metrics, SKU right-sizing opportunities, and autoscale recommendations.
+- **Azure AI / Cognitive Services Analysis** — Checks Cognitive Services and Azure OpenAI accounts for network security, managed identity, unused deployments, model version currency, provisioned capacity waste, and encryption configuration.
 
 ## Prerequisites
 
@@ -182,6 +183,19 @@ btg-devops analyze appserviceplan --resource-group my-rg
 
 # JSON output
 btg-devops analyze appserviceplan --output json
+```
+
+### Analyze Azure AI / Cognitive Services
+
+```bash
+# Analyze all Cognitive Services accounts
+btg-devops analyze cognitiveservices
+
+# Filter by resource group
+btg-devops analyze cognitiveservices --resource-group my-rg
+
+# JSON output
+btg-devops analyze cognitiveservices --output json
 ```
 
 ### Output (App Service Traffic)
