@@ -1,1 +1,14 @@
 btg-devops/btg-devops
+
+# compiled binaries
+*.exe
+*.exe~
+
+# environment variables / secrets
+.env
+.env.*
+*.env
+
+# build output
+dist/
+bin/
