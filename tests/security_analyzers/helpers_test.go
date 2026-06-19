@@ -5,4 +5,3 @@ package security_analyzers_test
 func strPtr(s string) *string  { return &s }
 func boolPtr(b bool) *bool     { return &b }
 func int32Ptr(i int32) *int32  { return &i }
-func int64Ptr(i int64) *int64  { return &i }

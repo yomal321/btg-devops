@@ -144,7 +144,7 @@ func runCognitiveServices(cmd *cobra.Command, args []string) error {
 		}
 
 		// 2. No private endpoint connections
-		if props.PrivateEndpointConnections == nil || len(props.PrivateEndpointConnections) == 0 {
+		if len(props.PrivateEndpointConnections) == 0 {
 			findings = append(findings, CognitiveServicesFinding{
 				Severity:       Warning,
 				Category:       "No Private Endpoint",
@@ -282,7 +282,7 @@ func runCognitiveServices(cmd *cobra.Command, args []string) error {
 					Category:       "No Deployments",
 					AccountName:    name,
 					ResourceGroup:  rg,
-					Description:    fmt.Sprintf("OpenAI/AI Services account has no model deployments — may be unused"),
+					Description:    "OpenAI/AI Services account has no model deployments — may be unused",
 					Recommendation: "Delete unused accounts to avoid unnecessary costs and reduce attack surface.",
 				})
 			}
@@ -360,7 +360,7 @@ func AnalyzeCogServicesFindings(accounts []*armcognitiveservices.Account) []Cogn
 			})
 		}
 
-		if props.PrivateEndpointConnections == nil || len(props.PrivateEndpointConnections) == 0 {
+		if len(props.PrivateEndpointConnections) == 0 {
 			findings = append(findings, CognitiveServicesFinding{
 				Severity: Warning, Category: "No Private Endpoint",
 				AccountName: name, ResourceGroup: rg,

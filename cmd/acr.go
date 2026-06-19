@@ -146,7 +146,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 		}
 
 		// 3. No private endpoint connections
-		if props.PrivateEndpointConnections == nil || len(props.PrivateEndpointConnections) == 0 {
+		if len(props.PrivateEndpointConnections) == 0 {
 			findings = append(findings, ACRFinding{
 				Severity:       Warning,
 				Category:       "No Private Endpoint",
@@ -335,7 +335,7 @@ func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFindin
 			})
 		}
 
-		if props.PrivateEndpointConnections == nil || len(props.PrivateEndpointConnections) == 0 {
+		if len(props.PrivateEndpointConnections) == 0 {
 			findings = append(findings, ACRFinding{
 				Severity: Warning, Category: "No Private Endpoint",
 				RegistryName: name, ResourceGroup: rg,

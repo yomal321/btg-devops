@@ -397,12 +397,12 @@ func parsePortRangesFromStrings(portStrs []string) []portRange {
 		parts := strings.SplitN(s, "-", 2)
 		if len(parts) == 2 {
 			var lo, hi int32
-			fmt.Sscanf(parts[0], "%d", &lo)
-			fmt.Sscanf(parts[1], "%d", &hi)
+			_, _ = fmt.Sscanf(parts[0], "%d", &lo)
+			_, _ = fmt.Sscanf(parts[1], "%d", &hi)
 			ranges = append(ranges, portRange{lo, hi})
 		} else {
 			var p int32
-			fmt.Sscanf(s, "%d", &p)
+			_, _ = fmt.Sscanf(s, "%d", &p)
 			ranges = append(ranges, portRange{p, p})
 		}
 	}

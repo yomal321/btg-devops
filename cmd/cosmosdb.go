@@ -136,7 +136,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 		}
 
 		// 2. No IP firewall rules and public access
-		if props.IPRules == nil || len(props.IPRules) == 0 {
+		if len(props.IPRules) == 0 {
 			if props.PublicNetworkAccess == nil || *props.PublicNetworkAccess == armcosmos.PublicNetworkAccessEnabled {
 				findings = append(findings, CosmosDBFinding{
 					Severity:       Warning,
@@ -150,7 +150,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 		}
 
 		// 3. No private endpoint connections
-		if props.PrivateEndpointConnections == nil || len(props.PrivateEndpointConnections) == 0 {
+		if len(props.PrivateEndpointConnections) == 0 {
 			findings = append(findings, CosmosDBFinding{
 				Severity:       Warning,
 				Category:       "No Private Endpoint",
@@ -217,7 +217,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 
 		// 6. Multi-region write not enabled
 		if props.EnableMultipleWriteLocations != nil && !*props.EnableMultipleWriteLocations {
-			if props.Locations != nil && len(props.Locations) > 1 {
+			if len(props.Locations) > 1 {
 				findings = append(findings, CosmosDBFinding{
 					Severity:       Info,
 					Category:       "Multi-Region Write Disabled",
@@ -230,7 +230,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 		}
 
 		// 7. Single region — no geo-redundancy
-		if props.Locations != nil && len(props.Locations) <= 1 {
+		if len(props.Locations) <= 1 {
 			findings = append(findings, CosmosDBFinding{
 				Severity:       Info,
 				Category:       "Single Region",
@@ -243,7 +243,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 
 		// 8. Automatic failover not enabled
 		if props.EnableAutomaticFailover != nil && !*props.EnableAutomaticFailover {
-			if props.Locations != nil && len(props.Locations) > 1 {
+			if len(props.Locations) > 1 {
 				findings = append(findings, CosmosDBFinding{
 					Severity:       Warning,
 					Category:       "Automatic Failover Disabled",
@@ -256,7 +256,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 		}
 
 		// 9. CORS configured (potential security review)
-		if props.Cors != nil && len(props.Cors) > 0 {
+		if len(props.Cors) > 0 {
 			for _, cors := range props.Cors {
 				if cors.AllowedOrigins != nil && *cors.AllowedOrigins == "*" {
 					findings = append(findings, CosmosDBFinding{
@@ -440,7 +440,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 			})
 		}
 
-		if props.IPRules == nil || len(props.IPRules) == 0 {
+		if len(props.IPRules) == 0 {
 			if props.PublicNetworkAccess == nil || *props.PublicNetworkAccess == armcosmos.PublicNetworkAccessEnabled {
 				findings = append(findings, CosmosDBFinding{
 					Severity: Warning, Category: "No IP Firewall Rules",
@@ -451,7 +451,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 			}
 		}
 
-		if props.PrivateEndpointConnections == nil || len(props.PrivateEndpointConnections) == 0 {
+		if len(props.PrivateEndpointConnections) == 0 {
 			findings = append(findings, CosmosDBFinding{
 				Severity: Warning, Category: "No Private Endpoint",
 				AccountName: name, ResourceGroup: rg,
@@ -504,7 +504,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 		}
 
 		if props.EnableMultipleWriteLocations != nil && !*props.EnableMultipleWriteLocations {
-			if props.Locations != nil && len(props.Locations) > 1 {
+			if len(props.Locations) > 1 {
 				findings = append(findings, CosmosDBFinding{
 					Severity: Info, Category: "Multi-Region Write Disabled",
 					AccountName: name, ResourceGroup: rg,
@@ -514,7 +514,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 			}
 		}
 
-		if props.Locations != nil && len(props.Locations) <= 1 {
+		if len(props.Locations) <= 1 {
 			findings = append(findings, CosmosDBFinding{
 				Severity: Info, Category: "Single Region",
 				AccountName: name, ResourceGroup: rg,
@@ -524,7 +524,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 		}
 
 		if props.EnableAutomaticFailover != nil && !*props.EnableAutomaticFailover {
-			if props.Locations != nil && len(props.Locations) > 1 {
+			if len(props.Locations) > 1 {
 				findings = append(findings, CosmosDBFinding{
 					Severity: Warning, Category: "Automatic Failover Disabled",
 					AccountName: name, ResourceGroup: rg,

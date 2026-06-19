@@ -292,7 +292,7 @@ func runKeyVault(cmd *cobra.Command, args []string) error {
 		}
 
 		// 7. No private endpoint connections
-		if props.PrivateEndpointConnections == nil || len(props.PrivateEndpointConnections) == 0 {
+		if len(props.PrivateEndpointConnections) == 0 {
 			findings = append(findings, KeyVaultFinding{
 				Severity:       Info,
 				Category:       "No Private Endpoints",
@@ -419,7 +419,7 @@ func AnalyzeKeyVaultFindings(vaults []*armkeyvault.Vault, now time.Time) []KeyVa
 			}
 		}
 
-		if props.PrivateEndpointConnections == nil || len(props.PrivateEndpointConnections) == 0 {
+		if len(props.PrivateEndpointConnections) == 0 {
 			findings = append(findings, KeyVaultFinding{
 				Severity: Info, Category: "No Private Endpoints",
 				VaultName: name, ResourceGrp: rg,

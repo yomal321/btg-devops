@@ -71,10 +71,9 @@ func runStorageUsage(ctx context.Context, subID string, cred *azidentity.Default
 	}
 
 	type containerInfo struct {
-		name        string
+		name         string
 		publicAccess string
-		hasPolicy   bool
-		leaseState  string
+		leaseState   string
 	}
 	var containers []containerInfo
 

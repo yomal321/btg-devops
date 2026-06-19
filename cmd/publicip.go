@@ -219,7 +219,7 @@ func analyzePublicIPs(pips []*armnetwork.PublicIPAddress) PublicIPReport {
 		}
 
 		// Check 5: No availability zones (Standard SKU)
-		if strings.EqualFold(sku, "Standard") && (pip.Zones == nil || len(pip.Zones) == 0) {
+		if strings.EqualFold(sku, "Standard") && len(pip.Zones) == 0 {
 			report.addFinding(PublicIPFinding{
 				Severity:       Info,
 				Category:       "Availability",
@@ -232,13 +232,6 @@ func analyzePublicIPs(pips []*armnetwork.PublicIPAddress) PublicIPReport {
 			})
 		}
 
-		// Check 6: IPv4 vs IPv6 check — flag IPv4 with no IPv6 counterpart as info
-		if pip.Properties != nil && pip.Properties.PublicIPAddressVersion != nil {
-			version := string(*pip.Properties.PublicIPAddressVersion)
-			if strings.EqualFold(version, "IPv4") {
-				// Just track, not a finding unless needed
-			}
-		}
 	}
 
 	return report

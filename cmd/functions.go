@@ -342,11 +342,6 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// 7. Client certificate mode
-		if props.ClientCertEnabled != nil && *props.ClientCertEnabled {
-			// Good — just note it
-		}
-
 		// 8. App state
 		if props.State != nil && !strings.EqualFold(*props.State, "Running") {
 			findings = append(findings, FunctionsFinding{

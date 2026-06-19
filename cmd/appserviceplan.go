@@ -282,10 +282,6 @@ func analyzeASPs(ctx context.Context, plans []*armappservice.Plan, planAppCount 
 			})
 		}
 
-		// Check 6: Linux vs Windows — flag if using older Windows-only SKUs
-		if plan.Properties != nil && plan.Properties.Reserved != nil && !*plan.Properties.Reserved {
-			// Windows plan — just informational
-		}
 	}
 
 	return report
