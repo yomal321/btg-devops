@@ -4,7 +4,22 @@ All notable changes to btg-devops will be documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 Versions follow [Semantic Versioning](https://semver.org).
 
+
 ---
+
+## v0.13.1 - 2026-06-19
+
+### What's Changed
+
+- Update CHANGELOG.md @yomal321 (#13)
+- Create CHANGELOG.md @yomal321 (#12)
+- test @yomal321 (#11)
+
+### ⚙️ CI / CD
+
+- Update tet @yomal321 (#10)
+
+this is a testing
 
 ## [v0.13.0] — 2026-06-19
 
@@ -24,6 +39,7 @@ Versions follow [Semantic Versioning](https://semver.org).
   - `appserviceplan_test.go` — App Service Plan checks
   - `cognitiveservices_test.go` — Cognitive Services checks
   - `resourcegroup_test.go` — Resource Group checks
+  
 - Unit tests for all 10 usage analyzers (`tests/usage_analyzers/`)
   - `usage_acr_test.go` — ACR cost and usage tips
   - `usage_appservice_test.go` — App Service cost and usage tips
@@ -35,6 +51,7 @@ Versions follow [Semantic Versioning](https://semver.org).
   - `usage_storage_test.go` — Storage Account cost and usage tips
   - `usage_cognitiveservices_test.go` — Cognitive Services cost and usage tips
   - `usage_helpers_test.go` — Shared usage helper tests
+  
 - GitHub Actions CI pipeline (`.github/workflows/ci.yml`) — runs build, test, and lint on every push to `main` and `production` and on every PR targeting `main`
 - Release Drafter (`.github/workflows/release-drafter.yml`) — auto-drafts release notes from PR labels (`feature`, `bugfix`, `chore`, `docs`, `ci`)
 - Automated CHANGELOG updater (`.github/workflows/update-changelog.yml`) — updates `CHANGELOG.md` automatically when a release is published
@@ -44,6 +61,7 @@ Versions follow [Semantic Versioning](https://semver.org).
 ### Fixed
 
 - Lint errors across `cmd/` flagged by `golangci-lint` (`errcheck`, `unused`, `gosimple`, `staticcheck`)
+
 
 ---
 
