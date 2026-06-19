@@ -17,6 +17,9 @@ categories:
   - title: '⚙️ CI / CD'
     labels:
       - 'ci'
+  - title: '🔀 Other Changes'
+    labels:
+      - 'other'
 
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
 change-title-escapes: '\<*_&'
