@@ -116,6 +116,11 @@ func runPublicIP(cmd *cobra.Command, args []string) error {
 // Approximate monthly cost for an unattached Standard SKU static PIP
 const standardPIPMonthlyCostUSD = 3.65
 
+// AnalyzePublicIPs is the exported, testable form of analyzePublicIPs.
+func AnalyzePublicIPs(pips []*armnetwork.PublicIPAddress) PublicIPReport {
+	return analyzePublicIPs(pips)
+}
+
 func analyzePublicIPs(pips []*armnetwork.PublicIPAddress) PublicIPReport {
 	report := PublicIPReport{
 		Summary: PublicIPSummary{

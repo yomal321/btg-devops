@@ -8,6 +8,49 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4"
 )
 
+// BuildPublicIPUsageTips returns optimization tips and estimated saving for a Public IP address.
+func BuildPublicIPUsageTips(attached bool, allocationMethod, sku string, ddosProtection bool, idleTimeoutMinutes int32, ipVersion, rg string, totalCost float64, meters []MeterCost) (tips []string, saving float64) {
+	if !attached {
+		saving += totalCost
+		tips = append(tips, "IP is not attached to any resource — static IPs still incur hourly charges; delete or reassign to eliminate cost")
+	}
+	if allocationMethod == "Static" && !attached {
+		saving += totalCost * 0.10
+		tips = append(tips, "Static IP reserved but unattached — static IPs cost more than dynamic; release it if no longer needed")
+	}
+	if sku == "Basic" && attached {
+		tips = append(tips, "Basic SKU Public IP has no zone redundancy and no SLA — upgrade to Standard SKU for production use")
+	}
+	if sku == "Standard" && !ddosProtection && totalCost > 5 {
+		tips = append(tips, "Standard SKU IP has no DDoS protection configured — enable DDoS Network Protection or DDoS IP Protection for internet-facing endpoints")
+	}
+	if idleTimeoutMinutes > 10 {
+		tips = append(tips, fmt.Sprintf("Idle timeout is %d minutes (default is 4) — high idle timeouts keep TCP connections open longer, increasing memory usage on backend VMs", idleTimeoutMinutes))
+	}
+	if ipVersion == "IPv4" && sku == "Standard" {
+		tips = append(tips, "Only IPv4 is configured — consider adding IPv6 for dual-stack support to improve reach and future-proof the architecture")
+	}
+	for _, m := range meters {
+		if m.Name == "Data Transfer" && m.Cost > 20 {
+			saving += m.Cost * 0.30
+			tips = append(tips, fmt.Sprintf("High data transfer cost ($%.2f) — review what is generating outbound traffic from this IP; consider Azure CDN for large content delivery", m.Cost))
+		}
+	}
+	if totalCost == 0 && attached {
+		tips = append(tips, "Zero cost despite being attached — verify the resource using this IP is active; it may indicate a billing data delay")
+	}
+	if sku == "Basic" && totalCost > 10 {
+		tips = append(tips, "Basic SKU does not support availability zones — if the attached resource uses zone-redundant deployment, the IP becomes a single point of failure")
+	}
+	if !attached && totalCost > 2 {
+		tips = append(tips, fmt.Sprintf("Unattached IP costing $%.2f/month — audit all Public IPs in resource group '%s' for similar waste", totalCost, rg))
+	}
+	if allocationMethod == "Static" && sku == "Basic" {
+		tips = append(tips, "Basic Static IP — Basic SKU is being retired; plan migration to Standard SKU before retirement deadline")
+	}
+	return
+}
+
 func runPublicIPUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID, name, rg string, days int) (*UsageReport, error) {
 	pipClient, err := armnetwork.NewPublicIPAddressesClient(subID, cred, nil)
 	if err != nil {
@@ -169,7 +212,7 @@ func runPublicIPUsage(ctx context.Context, subID string, cred *azidentity.Defaul
 		topRec = tips[0]
 	}
 
-	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"PacketCount", "ByteCount"}, days)
+	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"PacketCount", "ByteCount"}, days, "Count")
 	packetsPerDay := utilMetrics["PacketCount"]
 	bytesPerDay := utilMetrics["ByteCount"]
 	_ = bytesPerDay

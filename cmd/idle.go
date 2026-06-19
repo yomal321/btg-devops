@@ -109,6 +109,7 @@ func runIdle(cmd *cobra.Command, args []string) error {
 	// Analyze each resource
 	var idleResources []idleEntry
 	var highWasteResources []idleEntry
+	var mediumWasteResources []idleEntry
 
 	for i, res := range resources {
 		if i > 0 {
@@ -127,22 +128,25 @@ func runIdle(cmd *cobra.Command, args []string) error {
 			idleResources = append(idleResources, idleEntry{report: report, scoreRank: 0})
 		case "HIGH":
 			highWasteResources = append(highWasteResources, idleEntry{report: report, scoreRank: 1})
+		case "MEDIUM":
+			mediumWasteResources = append(mediumWasteResources, idleEntry{report: report, scoreRank: 2})
 		}
 	}
 
 	if flagOutput == "json" {
-		return outputIdleJSON(idleResources, highWasteResources)
+		return outputIdleJSON(idleResources, highWasteResources, mediumWasteResources)
 	}
 
-	return printIdleReport(idleResources, highWasteResources, total, flagIdleDays)
+	return printIdleReport(idleResources, highWasteResources, mediumWasteResources, total, flagIdleDays)
 }
 
 // ---------- json output ----------
 
-func outputIdleJSON(idle, high []idleEntry) error {
+func outputIdleJSON(idle, high, medium []idleEntry) error {
 	type jsonOut struct {
-		Idle      []*UsageReport `json:"idle"`
-		HighWaste []*UsageReport `json:"high_waste"`
+		Idle        []*UsageReport `json:"idle"`
+		HighWaste   []*UsageReport `json:"high_waste"`
+		MediumWaste []*UsageReport `json:"medium_waste"`
 	}
 	out := jsonOut{}
 	for _, e := range idle {
@@ -151,6 +155,9 @@ func outputIdleJSON(idle, high []idleEntry) error {
 	for _, e := range high {
 		out.HighWaste = append(out.HighWaste, e.report)
 	}
+	for _, e := range medium {
+		out.MediumWaste = append(out.MediumWaste, e.report)
+	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
@@ -158,10 +165,11 @@ func outputIdleJSON(idle, high []idleEntry) error {
 
 // ---------- table output ----------
 
-func printIdleReport(idle, high []idleEntry, totalScanned, days int) error {
+func printIdleReport(idle, high, medium []idleEntry, totalScanned, days int) error {
 	idleCount := len(idle)
 	highCount := len(high)
-	totalFound := idleCount + highCount
+	mediumCount := len(medium)
+	totalFound := idleCount + highCount + mediumCount
 
 	fmt.Println()
 	fmt.Println(strings.Repeat("═", 90))
@@ -170,13 +178,13 @@ func printIdleReport(idle, high []idleEntry, totalScanned, days int) error {
 
 	if totalFound == 0 {
 		fmt.Println()
-		fmt.Println("  ✓  No idle or highly wasteful resources found.")
+		fmt.Println("  ✓  No idle or wasteful resources found.")
 		fmt.Println()
 		fmt.Println(strings.Repeat("═", 90))
 		return nil
 	}
 
-	var totalIdleCost, totalHighCost float64
+	var totalIdleCost, totalHighCost, totalMediumCost float64
 
 	// IDLE section
 	if idleCount > 0 {
@@ -224,11 +232,35 @@ func printIdleReport(idle, high []idleEntry, totalScanned, days int) error {
 		}
 	}
 
+	// MEDIUM WASTE section
+	if mediumCount > 0 {
+		fmt.Println()
+		fmt.Printf("  ⚠   MEDIUM WASTE  —  Low activity relative to cost, review capacity\n")
+		fmt.Println("  " + strings.Repeat("─", 86))
+		for _, e := range medium {
+			r := e.report
+			totalMediumCost += r.TotalCost
+			util := buildUtilizationString(r.Utilization)
+			fmt.Printf("  %-35s  %-42s  $%.2f/mo\n", r.ResourceName, r.ResourceType, r.TotalCost)
+			if util != "" {
+				fmt.Printf("      Utilization: %s\n", util)
+			}
+			if r.WasteReason != "" {
+				fmt.Printf("      → %s\n", r.WasteReason)
+			}
+			if r.TotalSaving > 0 {
+				fmt.Printf("      Save ~$%.0f/month\n", r.TotalSaving)
+			}
+			fmt.Println()
+		}
+	}
+
 	// Summary
-	totalWasted := totalIdleCost + totalHighCost
+	totalWasted := totalIdleCost + totalHighCost + totalMediumCost
 	fmt.Println(strings.Repeat("═", 90))
 	fmt.Printf("  Idle Resources     : %d    ($%.2f/month)\n", idleCount, totalIdleCost)
 	fmt.Printf("  High Waste         : %d    ($%.2f/month)\n", highCount, totalHighCost)
+	fmt.Printf("  Medium Waste       : %d    ($%.2f/month)\n", mediumCount, totalMediumCost)
 	fmt.Printf("  Total Wasted Spend : ~$%.2f/month\n", totalWasted)
 	fmt.Println(strings.Repeat("═", 90))
 	fmt.Println()

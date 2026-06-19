@@ -8,6 +8,47 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
 )
 
+// BuildKeyVaultUsageTips returns optimization tips and estimated saving for a Key Vault.
+func BuildKeyVaultUsageTips(sku string, softDeleteEnabled, purgeProtection, rbacEnabled bool, softDeleteRetentionDays int32, networkDefaultAction, publicNetworkAccess string, totalCost float64, meters []MeterCost) (tips []string, saving float64) {
+	if sku == "premium" {
+		saving += totalCost * 0.50
+		tips = append(tips, "Premium (HSM) SKU costs ~2x Standard — verify HSM-backed keys are required for compliance")
+	}
+	if !softDeleteEnabled {
+		tips = append(tips, "Soft delete is disabled — enable it to protect against accidental or malicious key/secret deletion (no cost impact)")
+	}
+	if softDeleteRetentionDays > 30 {
+		tips = append(tips, fmt.Sprintf("Soft-delete retention is %d days — 7-30 days is typically sufficient; reducing simplifies compliance", softDeleteRetentionDays))
+	}
+	if !purgeProtection {
+		tips = append(tips, "Purge protection is disabled — enable to comply with FIPS 140-2 requirements and prevent permanent deletion during retention period")
+	}
+	if !rbacEnabled {
+		tips = append(tips, "Using legacy Vault Access Policies instead of Azure RBAC — migrate to RBAC for fine-grained, auditable permissions")
+	}
+	if networkDefaultAction == "Allow" {
+		tips = append(tips, "Network ACL default action is Allow (public access) — restrict to specific VNets or IPs to reduce attack surface")
+	}
+	if publicNetworkAccess == "Enabled" && networkDefaultAction == "Allow" {
+		tips = append(tips, "Public network access is fully open — consider Private Endpoint for vault access from Azure resources")
+	}
+	for _, m := range meters {
+		if m.Name == "Operations" && m.Cost > 5 {
+			tips = append(tips, fmt.Sprintf("High operation cost ($%.2f) — cache secrets in application memory to reduce Key Vault API call frequency", m.Cost))
+		}
+	}
+	if totalCost < 1 && totalCost > 0 {
+		tips = append(tips, "Very low cost — vault may be idle; verify it is still actively used or delete to eliminate base charges")
+	}
+	if totalCost == 0 {
+		tips = append(tips, "Zero cost in the period — vault is completely idle; delete if no longer needed")
+	}
+	if sku == "standard" && totalCost > 50 {
+		tips = append(tips, fmt.Sprintf("High operation volume ($%.2f/mo) — review which applications are calling Key Vault and implement caching", totalCost))
+	}
+	return
+}
+
 func runKeyVaultUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID, name, rg string, days int) (*UsageReport, error) {
 	kvClient, err := armkeyvault.NewVaultsClient(subID, cred, nil)
 	if err != nil {
@@ -155,7 +196,7 @@ func runKeyVaultUsage(ctx context.Context, subID string, cred *azidentity.Defaul
 		topRec = tips[0]
 	}
 
-	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"ServiceApiHit"}, days)
+	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"ServiceApiHit"}, days, "Count")
 	apiHitsPerDay := utilMetrics["ServiceApiHit"]
 	wasteScore, wasteReason := calcWasteScore(totalCost, -1, apiHitsPerDay)
 

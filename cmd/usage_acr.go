@@ -8,6 +8,49 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
 )
 
+// BuildACRUsageTips returns optimization tips and estimated monthly saving for an ACR registry.
+// Pure function — no Azure calls. Mirrors the business rules in runACRUsage.
+func BuildACRUsageTips(sku string, adminEnabled bool, publicAccess, zoneRedundancy string, replicationCount int, totalCost float64, meters []MeterCost) (tips []string, saving float64) {
+	if sku == "Premium" && totalCost < 50 {
+		saving += totalCost * 0.45
+		tips = append(tips, "Premium SKU at low cost — downgrade to Standard (~45% cheaper) unless geo-replication or private endpoints are required")
+	}
+	if sku == "Basic" && totalCost > 10 {
+		tips = append(tips, "Basic SKU has limited storage (10 GB) and no SLA for geo-redundancy — upgrade to Standard for production use")
+	}
+	if adminEnabled {
+		tips = append(tips, "Admin user is enabled — disable it and use Azure AD service principals or managed identities for authentication")
+	}
+	if publicAccess == "Enabled" {
+		tips = append(tips, "Public network access is open — restrict to specific VNets or use Private Endpoint to limit registry exposure")
+	}
+	if sku == "Premium" && replicationCount <= 1 {
+		saving += totalCost * 0.40
+		tips = append(tips, "Premium SKU with no geo-replications — geo-replication is a key Premium feature; downgrade to Standard if not needed")
+	}
+	if sku == "Premium" && zoneRedundancy == "Disabled" {
+		tips = append(tips, "Zone redundancy is disabled on Premium SKU — enable for higher availability at no extra cost if in a supported region")
+	}
+	for _, m := range meters {
+		if m.Name == "Storage" && m.Cost > 20 {
+			tips = append(tips, fmt.Sprintf("High storage cost ($%.2f) — enable retention policies to auto-delete old untagged images and reduce storage", m.Cost))
+		}
+	}
+	for _, m := range meters {
+		if m.Name == "Build" && m.Cost > 10 {
+			tips = append(tips, fmt.Sprintf("ACR Tasks build cost is $%.2f — consider moving image builds to GitHub Actions or Azure DevOps pipelines", m.Cost))
+		}
+	}
+	if totalCost == 0 {
+		tips = append(tips, "Zero cost — registry is idle (no pushes or pulls); delete if no longer needed to eliminate base tier cost")
+	}
+	if sku == "Premium" && totalCost > 0 && totalCost < 5 {
+		saving += totalCost * 0.60
+		tips = append(tips, "Premium SKU with near-zero activity — strongly consider Basic or Standard tier")
+	}
+	return
+}
+
 func runACRUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID, name, rg string, days int) (*UsageReport, error) {
 	acrClient, err := armcontainerregistry.NewRegistriesClient(subID, cred, nil)
 	if err != nil {
@@ -163,10 +206,11 @@ func runACRUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzur
 		topRec = tips[0]
 	}
 
-	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"StorageUsed", "SuccessfulPullCount", "SuccessfulPushCount"}, days)
-	storageGB := utilMetrics["StorageUsed"] / (1024 * 1024 * 1024)
-	pullsPerDay := utilMetrics["SuccessfulPullCount"]
-	pushesPerDay := utilMetrics["SuccessfulPushCount"]
+	gaugeMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"StorageUsed"}, days, "Average")
+	countMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"SuccessfulPullCount", "SuccessfulPushCount"}, days, "Count")
+	storageGB := gaugeMetrics["StorageUsed"] / (1024 * 1024 * 1024)
+	pullsPerDay := countMetrics["SuccessfulPullCount"]
+	pushesPerDay := countMetrics["SuccessfulPushCount"]
 	activityPerDay := pullsPerDay + pushesPerDay
 	wasteScore, wasteReason := calcWasteScore(totalCost, -1, activityPerDay)
 

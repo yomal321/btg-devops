@@ -650,7 +650,16 @@ func runGenericUsage(ctx context.Context, subID string, cred *azidentity.Default
 
 // queryResourceMetrics fetches Azure Monitor metrics for a resource averaged over the period.
 // Returns a map of metric name → average value. Errors are ignored — callers treat missing data as zero.
-func queryResourceMetrics(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID string, metricNames []string, days int) map[string]float64 {
+// queryResourceMetrics fetches Azure Monitor metrics for a resource.
+// aggregation must be "Count", "Total", or "Average" — callers pass the correct
+// aggregation for each metric so there is no ambiguity about which field to read:
+//   - "Count"   → dp.Count  (event counts: TotalRequests, Transactions, API hits)
+//   - "Total"   → dp.Total  (sum metrics: TotalRequestUnits, ByteCount)
+//   - "Average" → dp.Average (gauge metrics: CpuPercentage, MemoryPercentage, UsedCapacity)
+//
+// Count/Total results are divided by days to give a per-day average.
+// Average results are averaged across all hourly data points.
+func queryResourceMetrics(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID string, metricNames []string, days int, aggregation string) map[string]float64 {
 	client, err := armmonitor.NewMetricsClient(subID, cred, nil)
 	if err != nil {
 		return nil
@@ -659,13 +668,11 @@ func queryResourceMetrics(ctx context.Context, subID string, cred *azidentity.De
 	end := time.Now().UTC()
 	start := end.AddDate(0, 0, -days)
 	timespan := fmt.Sprintf("%s/%s", start.Format(time.RFC3339), end.Format(time.RFC3339))
-	interval := "P1D"
-	aggregation := "Average"
 
 	result, err := client.List(ctx, resourceID, &armmonitor.MetricsClientListOptions{
 		Metricnames: strPtr(strings.Join(metricNames, ",")),
 		Timespan:    strPtr(timespan),
-		Interval:    strPtr(interval),
+		Interval:    strPtr("PT1H"),
 		Aggregation: strPtr(aggregation),
 	})
 	if err != nil {
@@ -677,19 +684,41 @@ func queryResourceMetrics(ctx context.Context, subID string, cred *azidentity.De
 		if m.Name == nil || m.Name.Value == nil {
 			continue
 		}
-		name := *m.Name.Value
+		metricName := *m.Name.Value
+		if len(m.Timeseries) == 0 {
+			continue
+		}
+		ts := m.Timeseries[0]
+
 		var sum float64
-		var count int
-		for _, ts := range m.Timeseries {
-			for _, dp := range ts.Data {
+		var dataPoints int
+		for _, dp := range ts.Data {
+			switch aggregation {
+			case "Count":
+				if dp.Count != nil {
+					sum += *dp.Count
+					dataPoints++
+				}
+			case "Total":
+				if dp.Total != nil {
+					sum += *dp.Total
+					dataPoints++
+				}
+			default: // "Average"
 				if dp.Average != nil {
 					sum += *dp.Average
-					count++
+					dataPoints++
 				}
 			}
 		}
-		if count > 0 {
-			out[name] = sum / float64(count)
+
+		if dataPoints > 0 {
+			if aggregation == "Average" {
+				out[metricName] = sum / float64(dataPoints)
+			} else {
+				// Count/Total: sum of all hourly values ÷ days = daily average
+				out[metricName] = sum / float64(days)
+			}
 		}
 	}
 	return out
@@ -707,10 +736,12 @@ func calcWasteScore(cost, primaryPct, dailyActivity float64) (score, reason stri
 	}
 	if primaryPct >= 0 {
 		switch {
-		case primaryPct < 15 && cost > 30:
-			return "HIGH", fmt.Sprintf("Only %.1f%% utilized at $%.2f/month — severely over-provisioned; right-size immediately", primaryPct, cost)
+		case primaryPct < 5 && cost > 10:
+			return "HIGH", fmt.Sprintf("Only %.1f%% of provisioned capacity used at $%.2f/month — severely over-provisioned; right-size immediately", primaryPct, cost)
+		case primaryPct < 10 && cost > 10:
+			return "MEDIUM", fmt.Sprintf("Only %.1f%% of provisioned capacity used at $%.2f/month — consider reducing provisioned capacity", primaryPct, cost)
 		case primaryPct < 35 && cost > 10:
-			return "MEDIUM", fmt.Sprintf("%.1f%% utilization at $%.2f/month — consider scaling down or switching to a smaller SKU", primaryPct, cost)
+			return "LOW", fmt.Sprintf("%.1f%% utilization at $%.2f/month — monitor trends and consider right-sizing", primaryPct, cost)
 		case primaryPct >= 70:
 			return "HEALTHY", fmt.Sprintf("%.1f%% utilization — resource is well-utilized", primaryPct)
 		default:
@@ -718,6 +749,10 @@ func calcWasteScore(cost, primaryPct, dailyActivity float64) (score, reason stri
 		}
 	}
 	// Count-based metrics only
+	// Zero activity with any billing cost = IDLE regardless of how small the cost is
+	if dailyActivity == 0 && cost > 0 {
+		return "IDLE", fmt.Sprintf("Zero activity detected but $%.2f/month still billed — resource may be unused", cost)
+	}
 	if dailyActivity >= 0 && dailyActivity < 10 && cost > 20 {
 		return "HIGH", fmt.Sprintf("Very low activity (%.0f/day) at $%.2f/month — resource is likely idle", dailyActivity, cost)
 	}
@@ -878,6 +913,22 @@ func printUsageReport(r *UsageReport) {
 	fmt.Println(strings.Repeat("═", 90))
 	fmt.Println()
 }
+
+// ---------- exported wrappers for unit testing ----------
+
+func CalcWasteScore(cost, primaryPct, dailyActivity float64) (string, string) {
+	return calcWasteScore(cost, primaryPct, dailyActivity)
+}
+func CostSeverity(cost float64) Severity      { return costSeverity(cost) }
+func RenderBar(cost, maxCost float64, width int) string { return renderBar(cost, maxCost, width) }
+func SortMetersByCost(meters []MeterCost)      { sortMetersByCost(meters) }
+func MaxMeterCost(meters []MeterCost) float64  { return maxMeterCost(meters) }
+func BuildUtilizationString(util map[string]float64) string { return buildUtilizationString(util) }
+
+var UsageTypeAliases = usageTypeAliases
+var SupportedUsageTypes = supportedUsageTypes
+
+// ---------- table output ----------
 
 func printMeterTable(meters []MeterCost, currency string) {
 	maxCost := maxMeterCost(meters)

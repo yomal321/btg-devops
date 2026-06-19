@@ -8,6 +8,54 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v3"
 )
 
+// BuildCosmosDatabaseTips returns per-database optimization tips and estimated saving.
+func BuildCosmosDatabaseTips(rus float64, isAutoscale bool, dbCost float64) (tips []string, saving float64) {
+	if rus > 4000 && !isAutoscale {
+		saving += dbCost * 0.20
+		tips = append(tips, "High fixed RU/s without autoscale — switch to autoscale to save ~20% on idle capacity")
+	}
+	if rus > 10000 {
+		saving += dbCost * 0.30
+		tips = append(tips, fmt.Sprintf("Very high provisioned throughput (%.0f RU/s) — verify actual usage justifies this", rus))
+	}
+	if rus == 400 && dbCost > 5 {
+		saving += dbCost * 0.40
+		tips = append(tips, "Running at minimum 400 RU/s — consider Cosmos DB Serverless for unpredictable or low workloads")
+	}
+	if isAutoscale && rus > 20000 {
+		saving += dbCost * 0.15
+		tips = append(tips, fmt.Sprintf("Autoscale max set to %.0f RU/s — reduce max throughput if peak demand is lower", rus))
+	}
+	if dbCost > 100 {
+		tips = append(tips, fmt.Sprintf("High monthly cost ($%.2f) — review query patterns and indexing to reduce RU consumption", dbCost))
+	}
+	return
+}
+
+// BuildCosmosAccountTips returns account-level optimization tips and estimated saving.
+func BuildCosmosAccountTips(consistency string, replicationCount int, backupPolicy string, enableFreeTier bool, totalCost float64, dbCount int) (tips []string, saving float64) {
+	if consistency == "Strong" {
+		saving += totalCost * 0.15
+		tips = append(tips, "Strong consistency doubles read RU cost — use BoundedStaleness or Session consistency if strong consistency is not required")
+	}
+	if replicationCount > 2 {
+		saving += totalCost * 0.20
+		tips = append(tips, fmt.Sprintf("Account has %d regions — each write region multiplies write RU cost; use single write region with read replicas if possible", replicationCount))
+	}
+	if backupPolicy == "none" {
+		tips = append(tips, "No backup policy configured — enable periodic backup to prevent data loss (minimal cost impact)")
+	}
+	if !enableFreeTier && totalCost < 25 {
+		saving += 25
+		tips = append(tips, "Free tier not enabled — first 1000 RU/s and 25 GB storage are free per subscription; enable if eligible")
+	}
+	if dbCount == 0 {
+		saving += totalCost
+		tips = append(tips, "No SQL databases found — account may be idle; consider deleting if unused to eliminate fixed costs")
+	}
+	return
+}
+
 func runCosmosDBUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID, name, rg string, days int) (*UsageReport, error) {
 	cosmosClient, err := armcosmos.NewDatabaseAccountsClient(subID, cred, nil)
 	if err != nil {
@@ -37,6 +85,7 @@ func runCosmosDBUsage(ctx context.Context, subID string, cred *azidentity.Defaul
 	var databases []dbInfo
 	var totalRUs float64
 
+	seenDBs := map[string]bool{}
 	dbPager := sqlClient.NewListSQLDatabasesPager(rg, name, nil)
 	for dbPager.More() {
 		page, err := dbPager.NextPage(ctx)
@@ -45,9 +94,10 @@ func runCosmosDBUsage(ctx context.Context, subID string, cred *azidentity.Defaul
 		}
 		for _, db := range page.Value {
 			dbName := deref(db.Name)
-			if dbName == "" {
+			if dbName == "" || seenDBs[dbName] {
 				continue
 			}
+			seenDBs[dbName] = true
 			var rus float64
 			isAutoscale := false
 			if db.Properties != nil && db.Properties.Options != nil {
@@ -203,12 +253,19 @@ func runCosmosDBUsage(ctx context.Context, subID string, cred *azidentity.Defaul
 		topRec = "Switch high-RU/s databases to autoscale to save ~20% on provisioned throughput"
 	}
 
-	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"NormalizedRUConsumption", "TotalRequests"}, days)
-	ruPct := utilMetrics["NormalizedRUConsumption"]
-	requestsPerDay := utilMetrics["TotalRequests"]
-	// NormalizedRUConsumption returns 0 when diagnostics are not configured — use
-	// TotalRequests as the reliable activity signal instead.
-	wasteScore, wasteReason := calcWasteScore(totalCost, -1, requestsPerDay)
+	countMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"TotalRequests"}, days, "Count")
+	totalMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"TotalRequestUnits"}, days, "Total")
+	requestsPerDay := countMetrics["TotalRequests"]
+	ruUnitsPerDay := totalMetrics["TotalRequestUnits"]
+
+	// RU utilization % = consumed ÷ provisioned capacity per day
+	// totalRUs is RU/s provisioned; convert to RU/day for comparison
+	ruProvisionedPerDay := totalRUs * 86400
+	ruUtilPct := 0.0
+	if ruProvisionedPerDay > 0 && ruUnitsPerDay > 0 {
+		ruUtilPct = (ruUnitsPerDay / ruProvisionedPerDay) * 100
+	}
+	wasteScore, wasteReason := calcWasteScore(totalCost, ruUtilPct, requestsPerDay)
 
 	return &UsageReport{
 		ResourceName:      name,
@@ -223,7 +280,7 @@ func runCosmosDBUsage(ctx context.Context, subID string, cred *azidentity.Defaul
 		SubResources:      subResources,
 		TotalSaving:       totalSaving,
 		TopRecommendation: topRec,
-		Utilization:       map[string]float64{"RU %": ruPct, "Requests/day": requestsPerDay},
+		Utilization:       map[string]float64{"API Requests/day": requestsPerDay, "RU consumed/day": ruUnitsPerDay, "RU utilization %": ruUtilPct},
 		WasteScore:        wasteScore,
 		WasteReason:       wasteReason,
 	}, nil

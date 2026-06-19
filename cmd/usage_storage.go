@@ -9,6 +9,46 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 )
 
+// BuildStorageAccountTips returns account-level optimization tips and estimated saving.
+// publicContainerCount is the number of containers with public access.
+// containerCount is total number of blob containers.
+func BuildStorageAccountTips(accessTier, sku, kind string, httpsOnly, allowBlobPublic bool, minTLSVersion string, totalCost float64, publicContainerCount, containerCount int) (tips []string, saving float64) {
+	isGRS := len(sku) >= 3 && sku[len(sku)-3:] == "GRS"
+	isLRS := len(sku) >= 3 && sku[len(sku)-3:] == "LRS"
+	if accessTier == "Hot" && totalCost > 10 {
+		saving += totalCost * 0.30
+		tips = append(tips, "Access tier is Hot — move infrequently accessed blobs to Cool or Archive to save ~30%")
+	}
+	if isGRS && totalCost > 20 {
+		saving += totalCost * 0.35
+		tips = append(tips, fmt.Sprintf("SKU is %s (geo-redundant) — switch to ZRS or LRS if cross-region DR is not required (~35%% cheaper)", sku))
+	}
+	if isLRS && totalCost > 50 {
+		tips = append(tips, "SKU is LRS (single region) — consider ZRS for higher durability with minimal cost increase for critical data")
+	}
+	if !httpsOnly {
+		tips = append(tips, "HTTPS-only traffic is not enforced — enable to prevent data in transit exposure (no cost impact)")
+	}
+	if allowBlobPublic && publicContainerCount == 0 {
+		tips = append(tips, "AllowBlobPublicAccess is enabled at account level but no containers use it — disable to reduce attack surface")
+	}
+	if minTLSVersion == "TLS1_0" || minTLSVersion == "TLS1_1" {
+		tips = append(tips, fmt.Sprintf("Minimum TLS version is %s — upgrade to TLS1_2 to meet security compliance requirements", minTLSVersion))
+	}
+	if totalCost > 15 {
+		saving += totalCost * 0.20
+		tips = append(tips, "No lifecycle management policy detected — add policy to auto-tier or delete old blobs to reduce storage cost by ~20%")
+	}
+	if kind == "BlobStorage" {
+		tips = append(tips, "Account kind is BlobStorage (legacy) — migrate to StorageV2 for better features and lower cost tiers")
+	}
+	if containerCount == 0 {
+		saving += totalCost
+		tips = append(tips, "No blob containers found — account may be idle; delete if unused to eliminate monthly base cost")
+	}
+	return
+}
+
 func runStorageUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID, name, rg string, days int) (*UsageReport, error) {
 	storageClient, err := armstorage.NewAccountsClient(subID, cred, nil)
 	if err != nil {
@@ -202,9 +242,10 @@ func runStorageUsage(ctx context.Context, subID string, cred *azidentity.Default
 		topRec = accountTips[0]
 	}
 
-	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"Transactions", "UsedCapacity"}, days)
-	transactionsPerDay := utilMetrics["Transactions"]
-	usedGB := utilMetrics["UsedCapacity"] / (1024 * 1024 * 1024)
+	countMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"Transactions"}, days, "Count")
+	gaugeMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"UsedCapacity"}, days, "Average")
+	transactionsPerDay := countMetrics["Transactions"]
+	usedGB := gaugeMetrics["UsedCapacity"] / (1024 * 1024 * 1024)
 	wasteScore, wasteReason := calcWasteScore(totalCost, -1, transactionsPerDay)
 
 	return &UsageReport{
