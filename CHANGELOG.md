@@ -7,6 +7,13 @@ Versions follow [Semantic Versioning](https://semver.org).
 
 ---
 
+## v0.13.2 - 2026-06-19
+
+### What's Changed
+
+- Update CHANGELOG.md @yomal321 (#13)
+- Create CHANGELOG.md @yomal321 (#12)
+
 ## v0.13.1 - 2026-06-19
 
 ### What's Changed
@@ -26,7 +33,9 @@ this is a testing
 ### Added
 
 - `analyze all` command — runs all 12 analyzers sequentially and produces a combined report (table or JSON)
+  
 - Unit tests for all 12 security analyzers (`tests/security_analyzers/`)
+  
   - `iam_test.go` — IAM role assignment checks
   - `storage_test.go` — Storage Account security checks
   - `nsg_test.go` — Network Security Group checks
@@ -41,6 +50,7 @@ this is a testing
   - `resourcegroup_test.go` — Resource Group checks
   
 - Unit tests for all 10 usage analyzers (`tests/usage_analyzers/`)
+  
   - `usage_acr_test.go` — ACR cost and usage tips
   - `usage_appservice_test.go` — App Service cost and usage tips
   - `usage_appserviceplan_test.go` — App Service Plan cost and usage tips
@@ -53,10 +63,15 @@ this is a testing
   - `usage_helpers_test.go` — Shared usage helper tests
   
 - GitHub Actions CI pipeline (`.github/workflows/ci.yml`) — runs build, test, and lint on every push to `main` and `production` and on every PR targeting `main`
+  
 - Release Drafter (`.github/workflows/release-drafter.yml`) — auto-drafts release notes from PR labels (`feature`, `bugfix`, `chore`, `docs`, `ci`)
+  
 - Automated CHANGELOG updater (`.github/workflows/update-changelog.yml`) — updates `CHANGELOG.md` automatically when a release is published
+  
 - `CHANGELOG.md` — this file
+  
 - `CONTRIBUTING.md` — contributor guide with build, test, and lint instructions
+  
 
 ### Fixed
 
