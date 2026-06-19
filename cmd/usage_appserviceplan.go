@@ -8,6 +8,42 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v2"
 )
 
+// BuildASPUsageTips returns plan-level optimization tips and estimated monthly saving.
+func BuildASPUsageTips(sku, skuTier string, workers, maxWorkers int32, appCount, stoppedCount, disabledCount int, totalCost float64) (tips []string, saving float64) {
+	if sku == "P1v2" || sku == "P2v2" || sku == "P3v2" {
+		s := totalCost * 0.40
+		saving += s
+		tips = append(tips, fmt.Sprintf("SKU %s is an older generation — migrate to %sv3 for ~40%% better price-performance", sku, sku[:2]))
+	}
+	if stoppedCount > 0 {
+		tips = append(tips, fmt.Sprintf("%d stopped app(s) on this plan — remove them to free up capacity or downscale the plan", stoppedCount))
+	}
+	if workers > 3 && appCount <= 2 {
+		s := totalCost * 0.40
+		saving += s
+		tips = append(tips, fmt.Sprintf("Plan has %d worker instances but only %d apps — reduce worker count to save cost", workers, appCount))
+	}
+	if appCount == 0 {
+		saving += totalCost
+		tips = append(tips, "No apps found on this plan — plan is completely idle; delete it to eliminate charges")
+	}
+	if appCount == 1 && (skuTier == "PremiumV2" || skuTier == "PremiumV3") && totalCost > 100 {
+		s := totalCost * 0.50
+		saving += s
+		tips = append(tips, fmt.Sprintf("Only 1 app on %s tier plan — consider Basic or Standard tier for single low-traffic apps", skuTier))
+	}
+	if maxWorkers > 10 && workers < 3 {
+		tips = append(tips, fmt.Sprintf("Autoscale max set to %d but current instances is %d — review max scale-out limit to control runaway cost", maxWorkers, workers))
+	}
+	if sku == "F1" || sku == "D1" {
+		tips = append(tips, fmt.Sprintf("Plan is on %s (Free/Shared) tier — no SLA, CPU quota limits; upgrade to Basic or higher for production workloads", sku))
+	}
+	if skuTier == "Basic" && appCount > 2 {
+		tips = append(tips, "Basic tier does not support autoscale — upgrade to Standard or Premium if traffic varies throughout the day")
+	}
+	return
+}
+
 func runASPUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID, name, rg string, days int) (*UsageReport, error) {
 	aspClient, err := armappservice.NewPlansClient(subID, cred, nil)
 	if err != nil {
@@ -192,7 +228,7 @@ func runASPUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzur
 		topRec = planTips[0]
 	}
 
-	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"CpuPercentage", "MemoryPercentage"}, days)
+	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"CpuPercentage", "MemoryPercentage"}, days, "Average")
 	cpuPct := utilMetrics["CpuPercentage"]
 	memPct := utilMetrics["MemoryPercentage"]
 	wasteScore, wasteReason := calcWasteScore(totalCost, cpuPct, -1)

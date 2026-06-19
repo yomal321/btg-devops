@@ -8,6 +8,34 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cognitiveservices/armcognitiveservices"
 )
 
+// BuildCogServicesAccountTips returns account-level optimization tips and estimated saving.
+// depCount is the number of model deployments (for OpenAI accounts).
+func BuildCogServicesAccountTips(kind, sku, publicNetworkAccess string, restrictOutboundNetwork, disableLocalAuth bool, totalCost float64, depCount int) (tips []string, saving float64) {
+	if publicNetworkAccess == "Enabled" {
+		tips = append(tips, "Public network access is open — restrict to specific VNets or use Private Endpoint to prevent unauthorized API access")
+	}
+	if !restrictOutboundNetwork {
+		tips = append(tips, "Outbound network access is not restricted — enable outbound network restrictions to prevent data exfiltration")
+	}
+	if !disableLocalAuth {
+		tips = append(tips, "Local API key authentication is enabled — disable local auth and use Azure AD / managed identity for all access")
+	}
+	if sku == "S0" && totalCost > 100 && kind == "OpenAI" {
+		saving += totalCost * 0.20
+		tips = append(tips, fmt.Sprintf("High PAYG spend ($%.2f) — evaluate Provisioned Throughput Units (PTU) for predictable workloads; can reduce cost by ~20%%", totalCost))
+	}
+	if totalCost == 0 {
+		tips = append(tips, "Zero cost — account is completely idle; delete if no longer needed (PTU reservations still cost money even if unused)")
+	}
+	if kind == "OpenAI" && depCount == 0 {
+		tips = append(tips, "No model deployments found on this OpenAI account — account may be idle; delete to eliminate any base costs")
+	}
+	if kind != "OpenAI" && totalCost > 50 {
+		tips = append(tips, fmt.Sprintf("High spend ($%.2f) on %s service — review API call volume and consider caching responses to reduce per-call billing", totalCost, kind))
+	}
+	return
+}
+
 func runCognitiveServicesUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID, name, rg string, days int) (*UsageReport, error) {
 	csClient, err := armcognitiveservices.NewAccountsClient(subID, cred, nil)
 	if err != nil {
@@ -190,7 +218,7 @@ func runCognitiveServicesUsage(ctx context.Context, subID string, cred *azidenti
 		topRec = fmt.Sprintf("Right-size PTU deployments in %s to reduce reserved throughput cost by ~30%%", name)
 	}
 
-	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"TotalCalls", "TotalErrors"}, days)
+	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"TotalCalls", "TotalErrors"}, days, "Count")
 	callsPerDay := utilMetrics["TotalCalls"]
 	errorsPerDay := utilMetrics["TotalErrors"]
 	wasteScore, wasteReason := calcWasteScore(totalCost, -1, callsPerDay)

@@ -275,7 +275,7 @@ func anyToFloat64(v any) float64 {
 		return float64(val)
 	default:
 		var f float64
-		fmt.Sscanf(fmt.Sprintf("%v", val), "%f", &f)
+		_, _ = fmt.Sscanf(fmt.Sprintf("%v", val), "%f", &f)
 		return f
 	}
 }

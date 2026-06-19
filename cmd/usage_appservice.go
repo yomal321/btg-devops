@@ -8,6 +8,45 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v2"
 )
 
+// BuildAppServiceUsageTips returns optimization tips and estimated monthly saving for an App Service app.
+func BuildAppServiceUsageTips(state string, httpsOnly, clientCertEnabled, alwaysOn, http20Enabled, remoteDebugging bool, minTLSVersion, planName string, totalCost float64, meters []MeterCost) (tips []string, saving float64) {
+	if state == "Stopped" {
+		saving += totalCost
+		tips = append(tips, "App is stopped but still accruing plan charges — remove if no longer needed")
+	}
+	if !httpsOnly {
+		tips = append(tips, "HTTPS-only is not enforced — enable to prevent HTTP traffic and meet security standards (no cost impact)")
+	}
+	if minTLSVersion == "1.0" || minTLSVersion == "1.1" {
+		tips = append(tips, fmt.Sprintf("Minimum TLS version is %s — upgrade to TLS 1.2 minimum for PCI-DSS and security compliance", minTLSVersion))
+	}
+	if remoteDebugging {
+		tips = append(tips, "Remote debugging is enabled — this is a security risk in production; disable it immediately")
+	}
+	if !alwaysOn && totalCost > 10 {
+		tips = append(tips, "Always On is disabled — app will be unloaded after inactivity causing cold start delays; enable if this is a production app")
+	}
+	if !http20Enabled {
+		tips = append(tips, "HTTP/2 is not enabled — enable it for better performance and reduced bandwidth usage at no extra cost")
+	}
+	if !clientCertEnabled && totalCost > 20 {
+		tips = append(tips, "Client certificate authentication is disabled — consider enabling for APIs to add mutual TLS authentication")
+	}
+	for _, m := range meters {
+		if m.Name == "Bandwidth" && m.Cost > 10 {
+			tips = append(tips, fmt.Sprintf("High bandwidth cost ($%.2f) — add Azure CDN or Front Door in front of this app to cache static content", m.Cost))
+			saving += m.Cost * 0.40
+		}
+	}
+	if totalCost == 0 {
+		tips = append(tips, "Zero cost detected — app has no billable activity; verify it is still needed or delete to free plan capacity")
+	}
+	if planName == "" {
+		tips = append(tips, "No App Service Plan linked — app may be in a broken state; verify plan assignment")
+	}
+	return
+}
+
 func runAppServiceUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzureCredential, resourceID, name, rg string, days int) (*UsageReport, error) {
 	appsClient, err := armappservice.NewWebAppsClient(subID, cred, nil)
 	if err != nil {
@@ -161,10 +200,11 @@ func runAppServiceUsage(ctx context.Context, subID string, cred *azidentity.Defa
 		topRec = tips[0]
 	}
 
-	utilMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"CpuPercentage", "MemoryPercentage", "Requests"}, days)
-	cpuPct := utilMetrics["CpuPercentage"]
-	memPct := utilMetrics["MemoryPercentage"]
-	requestsPerDay := utilMetrics["Requests"]
+	avgMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"CpuPercentage", "MemoryPercentage"}, days, "Average")
+	countMetrics := queryResourceMetrics(ctx, subID, cred, resourceID, []string{"Requests"}, days, "Count")
+	cpuPct := avgMetrics["CpuPercentage"]
+	memPct := avgMetrics["MemoryPercentage"]
+	requestsPerDay := countMetrics["Requests"]
 	wasteScore, wasteReason := calcWasteScore(totalCost, cpuPct, requestsPerDay)
 
 	return &UsageReport{
