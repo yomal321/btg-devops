@@ -35,7 +35,7 @@ func init() {
 	collectCmd.Flags().StringVar(&collectTrigger, "trigger", "manual", "How the run was triggered: manual or scheduled")
 }
 
-func runCollect(cmd *cobra.Command, args []string) error {
+func runCollect(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -133,18 +133,18 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	}
 
 	allExtractors := []extractor{
-		{"storage",           func() (any, error) { return extractors.ExtractStorage(ctx, subID, cred) }},
-		{"iam",               func() (any, error) { return extractors.ExtractIAM(ctx, subID, cred) }},
-		{"nsg",               func() (any, error) { return extractors.ExtractNSG(ctx, subID, cred) }},
-		{"acr",               func() (any, error) { return extractors.ExtractACR(ctx, subID, cred) }},
-		{"cosmosdb",          func() (any, error) { return extractors.ExtractCosmosDB(ctx, subID, cred) }},
-		{"keyvault",          func() (any, error) { return extractors.ExtractKeyVault(ctx, subID, cred) }},
-		{"functions",         func() (any, error) { return extractors.ExtractFunctions(ctx, subID, cred) }},
-		{"appservice",        func() (any, error) { return extractors.ExtractAppService(ctx, subID, cred) }},
-		{"appserviceplan",    func() (any, error) { return extractors.ExtractAppServicePlan(ctx, subID, cred) }},
-		{"publicip",          func() (any, error) { return extractors.ExtractPublicIP(ctx, subID, cred) }},
+		{"storage", func() (any, error) { return extractors.ExtractStorage(ctx, subID, cred) }},
+		{"iam", func() (any, error) { return extractors.ExtractIAM(ctx, subID, cred) }},
+		{"nsg", func() (any, error) { return extractors.ExtractNSG(ctx, subID, cred) }},
+		{"acr", func() (any, error) { return extractors.ExtractACR(ctx, subID, cred) }},
+		{"cosmosdb", func() (any, error) { return extractors.ExtractCosmosDB(ctx, subID, cred) }},
+		{"keyvault", func() (any, error) { return extractors.ExtractKeyVault(ctx, subID, cred) }},
+		{"functions", func() (any, error) { return extractors.ExtractFunctions(ctx, subID, cred) }},
+		{"appservice", func() (any, error) { return extractors.ExtractAppService(ctx, subID, cred) }},
+		{"appserviceplan", func() (any, error) { return extractors.ExtractAppServicePlan(ctx, subID, cred) }},
+		{"publicip", func() (any, error) { return extractors.ExtractPublicIP(ctx, subID, cred) }},
 		{"cognitiveservices", func() (any, error) { return extractors.ExtractCognitiveServices(ctx, subID, cred) }},
-		{"resourcegroup",     func() (any, error) { return extractors.ExtractResourceGroup(ctx, subID, cred) }},
+		{"resourcegroup", func() (any, error) { return extractors.ExtractResourceGroup(ctx, subID, cred) }},
 	}
 
 	rawData := map[string]any{

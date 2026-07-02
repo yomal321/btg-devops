@@ -57,7 +57,7 @@ func init() {
 	appServicePlanCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runAppServicePlan(cmd *cobra.Command, args []string) error {
+func runAppServicePlan(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -155,7 +155,7 @@ var skuMonthlyCostUSD = map[string]float64{
 	"I1V2": 298.00, "I2V2": 596.00, "I3V2": 1192.00,
 }
 
-func analyzeASPs(ctx context.Context, plans []*armappservice.Plan, planAppCount map[string]int, webClient *armappservice.WebAppsClient, planClient *armappservice.PlansClient, metricsClient *armmonitor.MetricsClient) ASPReport {
+func analyzeASPs(ctx context.Context, plans []*armappservice.Plan, planAppCount map[string]int, _ *armappservice.WebAppsClient, _ *armappservice.PlansClient, metricsClient *armmonitor.MetricsClient) ASPReport {
 	report := ASPReport{
 		Summary: ASPSummary{
 			TotalPlans:         len(plans),

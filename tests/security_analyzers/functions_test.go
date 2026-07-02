@@ -9,10 +9,10 @@ import (
 
 func funcApp(name string) cmd.FunctionAppInput {
 	return cmd.FunctionAppInput{
-		Name:          name,
-		ResourceGroup: "rg-test",
-		State:         "Running",
-		HTTPSOnly:     true,
+		Name:               name,
+		ResourceGroup:      "rg-test",
+		State:              "Running",
+		HTTPSOnly:          true,
 		HasManagedIdentity: true,
 		ExtensionVersion:   "~4",
 	}

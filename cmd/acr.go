@@ -16,12 +16,12 @@ import (
 // ---------- data types ----------
 
 type ACRFinding struct {
-	Severity     Severity `json:"severity"`
-	Category     string   `json:"category"`
-	RegistryName string   `json:"registry_name"`
-	ResourceGroup string  `json:"resource_group"`
-	Description  string   `json:"description"`
-	Recommendation string `json:"recommendation"`
+	Severity       Severity `json:"severity"`
+	Category       string   `json:"category"`
+	RegistryName   string   `json:"registry_name"`
+	ResourceGroup  string   `json:"resource_group"`
+	Description    string   `json:"description"`
+	Recommendation string   `json:"recommendation"`
 }
 
 type ACRSummary struct {
@@ -51,7 +51,7 @@ func init() {
 	acrCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runACR(cmd *cobra.Command, args []string) error {
+func runACR(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -128,7 +128,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 				Category:       "Admin Account Enabled",
 				RegistryName:   name,
 				ResourceGroup:  rg,
-				Description:    "Admin user account is enabled — allows username/password authentication",
+				Description:    "Admin user account is enabled â€” allows username/password authentication",
 				Recommendation: "Disable admin account and use Azure AD service principals or managed identities for authentication.",
 			})
 		}
@@ -140,7 +140,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 				Category:       "Public Network Access",
 				RegistryName:   name,
 				ResourceGroup:  rg,
-				Description:    "Public network access is enabled — registry is accessible from the internet",
+				Description:    "Public network access is enabled â€” registry is accessible from the internet",
 				Recommendation: "Disable public network access and use private endpoints for secure connectivity.",
 			})
 		}
@@ -166,7 +166,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 						Category:       "Retention Policy Disabled",
 						RegistryName:   name,
 						ResourceGroup:  rg,
-						Description:    "Retention policy is disabled — untagged manifests will accumulate indefinitely",
+						Description:    "Retention policy is disabled â€” untagged manifests will accumulate indefinitely",
 						Recommendation: "Enable retention policy to automatically purge untagged manifests and reduce storage costs.",
 					})
 				}
@@ -176,7 +176,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 					Category:       "No Retention Policy",
 					RegistryName:   name,
 					ResourceGroup:  rg,
-					Description:    "No retention policy configured — untagged manifests will accumulate indefinitely",
+					Description:    "No retention policy configured â€” untagged manifests will accumulate indefinitely",
 					Recommendation: "Configure a retention policy to automatically purge untagged manifests.",
 				})
 			}
@@ -196,7 +196,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// 6. Anonymous pull access — check via NetworkRuleBypassOptions or skip if field unavailable
+		// 6. Anonymous pull access â€” check via NetworkRuleBypassOptions or skip if field unavailable
 
 		// 7. Content trust / trust policy not enabled (Premium only)
 		if reg.SKU != nil && reg.SKU.Name != nil && *reg.SKU.Name == armcontainerregistry.SKUNamePremium {
@@ -214,7 +214,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// 8. Export policy not disabled (Premium only — prevents data exfiltration)
+		// 8. Export policy not disabled (Premium only â€” prevents data exfiltration)
 		if reg.SKU != nil && reg.SKU.Name != nil && *reg.SKU.Name == armcontainerregistry.SKUNamePremium {
 			if props.Policies != nil && props.Policies.ExportPolicy != nil {
 				if props.Policies.ExportPolicy.Status != nil && *props.Policies.ExportPolicy.Status == armcontainerregistry.ExportPolicyStatusEnabled {
@@ -223,14 +223,14 @@ func runACR(cmd *cobra.Command, args []string) error {
 						Category:       "Export Policy Enabled",
 						RegistryName:   name,
 						ResourceGroup:  rg,
-						Description:    "Export policy is enabled — images can be exported out of the registry",
+						Description:    "Export policy is enabled â€” images can be exported out of the registry",
 						Recommendation: "Consider disabling export policy to prevent data exfiltration via image export.",
 					})
 				}
 			}
 		}
 
-		// 9. Basic/Standard SKU — suggest Premium for production
+		// 9. Basic/Standard SKU â€” suggest Premium for production
 		if reg.SKU != nil && reg.SKU.Name != nil {
 			skuName := *reg.SKU.Name
 			if skuName == armcontainerregistry.SKUNameBasic {
@@ -239,7 +239,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 					Category:       "Basic SKU",
 					RegistryName:   name,
 					ResourceGroup:  rg,
-					Description:    "Using Basic SKU — limited storage, throughput, and no geo-replication or private endpoints",
+					Description:    "Using Basic SKU â€” limited storage, throughput, and no geo-replication or private endpoints",
 					Recommendation: "Upgrade to Standard or Premium SKU for production workloads.",
 				})
 			}
@@ -305,7 +305,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// AnalyzeACRFindings runs ACR checks on pre-fetched data — no Azure calls.
+// AnalyzeACRFindings runs ACR checks on pre-fetched data â€” no Azure calls.
 // Skips geo-replication check (requires Azure client).
 func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFinding {
 	var findings []ACRFinding
@@ -321,7 +321,7 @@ func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFindin
 			findings = append(findings, ACRFinding{
 				Severity: Critical, Category: "Admin Account Enabled",
 				RegistryName: name, ResourceGroup: rg,
-				Description:    "Admin user account is enabled — allows username/password authentication",
+				Description:    "Admin user account is enabled â€” allows username/password authentication",
 				Recommendation: "Disable admin account and use Azure AD service principals or managed identities for authentication.",
 			})
 		}
@@ -330,7 +330,7 @@ func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFindin
 			findings = append(findings, ACRFinding{
 				Severity: Warning, Category: "Public Network Access",
 				RegistryName: name, ResourceGroup: rg,
-				Description:    "Public network access is enabled — registry is accessible from the internet",
+				Description:    "Public network access is enabled â€” registry is accessible from the internet",
 				Recommendation: "Disable public network access and use private endpoints for secure connectivity.",
 			})
 		}
@@ -350,7 +350,7 @@ func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFindin
 					findings = append(findings, ACRFinding{
 						Severity: Warning, Category: "Retention Policy Disabled",
 						RegistryName: name, ResourceGroup: rg,
-						Description:    "Retention policy is disabled — untagged manifests will accumulate indefinitely",
+						Description:    "Retention policy is disabled â€” untagged manifests will accumulate indefinitely",
 						Recommendation: "Enable retention policy to automatically purge untagged manifests and reduce storage costs.",
 					})
 				}
@@ -358,7 +358,7 @@ func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFindin
 				findings = append(findings, ACRFinding{
 					Severity: Warning, Category: "No Retention Policy",
 					RegistryName: name, ResourceGroup: rg,
-					Description:    "No retention policy configured — untagged manifests will accumulate indefinitely",
+					Description:    "No retention policy configured â€” untagged manifests will accumulate indefinitely",
 					Recommendation: "Configure a retention policy to automatically purge untagged manifests.",
 				})
 			}
@@ -388,7 +388,7 @@ func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFindin
 					findings = append(findings, ACRFinding{
 						Severity: Info, Category: "Export Policy Enabled",
 						RegistryName: name, ResourceGroup: rg,
-						Description:    "Export policy is enabled — images can be exported out of the registry",
+						Description:    "Export policy is enabled â€” images can be exported out of the registry",
 						Recommendation: "Consider disabling export policy to prevent data exfiltration via image export.",
 					})
 				}
@@ -408,7 +408,7 @@ func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFindin
 			findings = append(findings, ACRFinding{
 				Severity: Info, Category: "Basic SKU",
 				RegistryName: name, ResourceGroup: rg,
-				Description:    "Using Basic SKU — limited storage, throughput, and no geo-replication or private endpoints",
+				Description:    "Using Basic SKU â€” limited storage, throughput, and no geo-replication or private endpoints",
 				Recommendation: "Upgrade to Standard or Premium SKU for production workloads.",
 			})
 		}
@@ -441,7 +441,7 @@ func printACRTable(r ACRReport) {
 	fmt.Println()
 
 	if len(r.Findings) == 0 {
-		fmt.Println("  No issues found. 🎉")
+		fmt.Println("  No issues found. ðŸŽ‰")
 		return
 	}
 
@@ -464,11 +464,11 @@ func printACRTable(r ACRReport) {
 			continue
 		}
 		printed[key] = true
-		icon := "ℹ️"
+		icon := "â„¹ï¸"
 		if f.Severity == Critical {
-			icon = "🔴"
+			icon = "ðŸ”´"
 		} else if f.Severity == Warning {
-			icon = "🟡"
+			icon = "ðŸŸ¡"
 		}
 		fmt.Printf("  %s [%s] %s: %s\n", icon, f.Severity, f.Category, f.Recommendation)
 	}

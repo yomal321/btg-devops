@@ -178,4 +178,6 @@ func TestAnalyzeACRFindings(t *testing.T) {
 	}
 }
 
-func retentionStatus(v armcontainerregistry.PolicyStatus) *armcontainerregistry.PolicyStatus { return &v }
+func retentionStatus(v armcontainerregistry.PolicyStatus) *armcontainerregistry.PolicyStatus {
+	return &v
+}

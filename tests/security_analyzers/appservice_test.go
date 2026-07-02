@@ -45,7 +45,7 @@ func TestClassifyTrafficStatus(t *testing.T) {
 		{
 			name: "High 5xx error rate appends warning to recommendation",
 			input: cmd.AppTrafficReport{
-				Name: "app1", TotalRequests: 100, Http5xx: 15,
+				Name: "app1", TotalRequests: 100, HTTP5xx: 15,
 			},
 			checkReport: func(t *testing.T, r *cmd.AppTrafficReport) {
 				assert.Contains(t, r.Recommendation, "5xx error rate")
@@ -54,7 +54,7 @@ func TestClassifyTrafficStatus(t *testing.T) {
 		{
 			name: "Low 5xx error rate does not append warning",
 			input: cmd.AppTrafficReport{
-				Name: "app1", TotalRequests: 1000, Http5xx: 5,
+				Name: "app1", TotalRequests: 1000, HTTP5xx: 5,
 			},
 			checkReport: func(t *testing.T, r *cmd.AppTrafficReport) {
 				assert.NotContains(t, r.Recommendation, "5xx error rate")

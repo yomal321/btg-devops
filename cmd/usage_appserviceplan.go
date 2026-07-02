@@ -9,7 +9,7 @@ import (
 )
 
 // BuildASPUsageTips returns plan-level optimization tips and estimated monthly saving.
-func BuildASPUsageTips(sku, skuTier string, workers, maxWorkers int32, appCount, stoppedCount, disabledCount int, totalCost float64) (tips []string, saving float64) {
+func BuildASPUsageTips(sku, skuTier string, workers, maxWorkers int32, appCount, stoppedCount, _ int, totalCost float64) (tips []string, saving float64) {
 	if sku == "P1v2" || sku == "P2v2" || sku == "P3v2" {
 		s := totalCost * 0.40
 		saving += s

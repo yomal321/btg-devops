@@ -52,7 +52,7 @@ func init() {
 	storageCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runStorage(cmd *cobra.Command, args []string) error {
+func runStorage(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {

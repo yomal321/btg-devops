@@ -192,6 +192,6 @@ func TestAnalyzeStorageFindings(t *testing.T) {
 	}
 }
 
-func tlsVersion(v armstorage.MinimumTLSVersion) *armstorage.MinimumTLSVersion { return &v }
+func tlsVersion(v armstorage.MinimumTLSVersion) *armstorage.MinimumTLSVersion        { return &v }
 func networkAccess(v armstorage.PublicNetworkAccess) *armstorage.PublicNetworkAccess { return &v }
-func defaultAction(v armstorage.DefaultAction) *armstorage.DefaultAction              { return &v }
+func defaultAction(v armstorage.DefaultAction) *armstorage.DefaultAction             { return &v }

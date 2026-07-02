@@ -17,12 +17,12 @@ import (
 // ---------- data types ----------
 
 type KeyVaultFinding struct {
-	Severity    Severity `json:"severity"`
-	Category    string   `json:"category"`
-	VaultName   string   `json:"vault_name"`
-	ResourceGrp string   `json:"resource_group"`
-	Description string   `json:"description"`
-	Recommendation string `json:"recommendation"`
+	Severity       Severity `json:"severity"`
+	Category       string   `json:"category"`
+	VaultName      string   `json:"vault_name"`
+	ResourceGrp    string   `json:"resource_group"`
+	Description    string   `json:"description"`
+	Recommendation string   `json:"recommendation"`
 }
 
 type KeyVaultSummary struct {
@@ -52,7 +52,7 @@ func init() {
 	keyvaultCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runKeyVault(cmd *cobra.Command, args []string) error {
+func runKeyVault(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -339,7 +339,7 @@ func runKeyVault(cmd *cobra.Command, args []string) error {
 
 // AnalyzeKeyVaultFindings runs Key Vault checks on pre-fetched vaults — no Azure calls.
 // Skips key/secret expiry checks (require data-plane client).
-func AnalyzeKeyVaultFindings(vaults []*armkeyvault.Vault, now time.Time) []KeyVaultFinding {
+func AnalyzeKeyVaultFindings(vaults []*armkeyvault.Vault, _ time.Time) []KeyVaultFinding {
 	var findings []KeyVaultFinding
 	for _, vault := range vaults {
 		name := deref(vault.Name)

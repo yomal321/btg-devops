@@ -16,12 +16,12 @@ import (
 // ---------- data types ----------
 
 type CognitiveServicesFinding struct {
-	Severity      Severity `json:"severity"`
-	Category      string   `json:"category"`
-	AccountName   string   `json:"account_name"`
-	ResourceGroup string   `json:"resource_group"`
-	Description   string   `json:"description"`
-	Recommendation string  `json:"recommendation"`
+	Severity       Severity `json:"severity"`
+	Category       string   `json:"category"`
+	AccountName    string   `json:"account_name"`
+	ResourceGroup  string   `json:"resource_group"`
+	Description    string   `json:"description"`
+	Recommendation string   `json:"recommendation"`
 }
 
 type CognitiveServicesSummary struct {
@@ -52,7 +52,7 @@ func init() {
 	cognitiveservicesCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runCognitiveServices(cmd *cobra.Command, args []string) error {
+func runCognitiveServices(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {

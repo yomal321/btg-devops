@@ -38,7 +38,7 @@ func main() {
 		run  func() (any, error)
 	}
 
-	extractors_list := []extractor{
+	extractorsList := []extractor{
 		{"storage", func() (any, error) { return extractors.ExtractStorage(ctx, subID, cred) }},
 		{"iam", func() (any, error) { return extractors.ExtractIAM(ctx, subID, cred) }},
 		{"nsg", func() (any, error) { return extractors.ExtractNSG(ctx, subID, cred) }},
@@ -55,7 +55,7 @@ func main() {
 
 	// single resource mode
 	if target != "all" {
-		for _, e := range extractors_list {
+		for _, e := range extractorsList {
 			if e.name == target {
 				fmt.Fprintf(os.Stderr, "Extracting %s...\n\n", target)
 				data, err := e.run()
@@ -69,7 +69,7 @@ func main() {
 			}
 		}
 		fmt.Fprintf(os.Stderr, "unknown resource: %q\n\nAvailable resources:\n", target)
-		for _, e := range extractors_list {
+		for _, e := range extractorsList {
 			fmt.Fprintf(os.Stderr, "  %s\n", e.name)
 		}
 		os.Exit(1)
@@ -77,8 +77,8 @@ func main() {
 
 	// all resources mode
 	result := map[string]any{}
-	for i, e := range extractors_list {
-		fmt.Fprintf(os.Stderr, "[%d/%d] %s...\n", i+1, len(extractors_list), e.name)
+	for i, e := range extractorsList {
+		fmt.Fprintf(os.Stderr, "[%d/%d] %s...\n", i+1, len(extractorsList), e.name)
 		data, err := e.run()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)

@@ -17,9 +17,9 @@ type AppServiceMetrics struct {
 	TotalRequests float64 `json:"total_requests"`
 	BytesReceived float64 `json:"bytes_received"`
 	BytesSent     float64 `json:"bytes_sent"`
-	Http2xx       float64 `json:"http_2xx"`
-	Http4xx       float64 `json:"http_4xx"`
-	Http5xx       float64 `json:"http_5xx"`
+	HTTP2xx       float64 `json:"http_2xx"`
+	HTTP4xx       float64 `json:"http_4xx"`
+	HTTP5xx       float64 `json:"http_5xx"`
 	PeriodDays    int     `json:"period_days"`
 }
 
@@ -109,11 +109,11 @@ func ExtractAppService(ctx context.Context, subID string, cred azcore.TokenCrede
 				case "BytesSent":
 					metrics.BytesSent = total
 				case "Http2xx":
-					metrics.Http2xx = total
+					metrics.HTTP2xx = total
 				case "Http4xx":
-					metrics.Http4xx = total
+					metrics.HTTP4xx = total
 				case "Http5xx":
-					metrics.Http5xx = total
+					metrics.HTTP5xx = total
 				}
 			}
 		}

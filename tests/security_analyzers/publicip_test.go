@@ -30,14 +30,14 @@ func TestAnalyzePublicIPs(t *testing.T) {
 	dynamic := armnetwork.IPAllocationMethodDynamic
 
 	tests := []struct {
-		name         string
-		pips         []*armnetwork.PublicIPAddress
+		name           string
+		pips           []*armnetwork.PublicIPAddress
 		wantUnattached int
-		checkReport  func(t *testing.T, report cmd.PublicIPReport)
+		checkReport    func(t *testing.T, report cmd.PublicIPReport)
 	}{
 		{
-			name:         "Empty PIP list returns empty report",
-			pips:         []*armnetwork.PublicIPAddress{},
+			name:           "Empty PIP list returns empty report",
+			pips:           []*armnetwork.PublicIPAddress{},
 			wantUnattached: 0,
 			checkReport: func(t *testing.T, report cmd.PublicIPReport) {
 				assert.Equal(t, 0, report.Summary.TotalPIPs)

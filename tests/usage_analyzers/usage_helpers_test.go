@@ -135,7 +135,7 @@ func TestSortMetersByCost(t *testing.T) {
 	assert.Equal(t, float64(10), meters[2].Cost)
 }
 
-func TestSortMetersByCost_Empty(t *testing.T) {
+func TestSortMetersByCost_Empty(_ *testing.T) {
 	var meters []cmd.MeterCost
 	cmd.SortMetersByCost(meters) // must not panic
 }
@@ -180,9 +180,9 @@ func TestBuildUtilizationString_Float(t *testing.T) {
 
 func TestBuildUtilizationString_MultipleEntriesSorted(t *testing.T) {
 	result := cmd.BuildUtilizationString(map[string]float64{
-		"zoo": 1,
+		"zoo":   1,
 		"alpha": 2,
-		"beta": 3,
+		"beta":  3,
 	})
 	parts := strings.Split(result, "  |  ")
 	assert.Equal(t, 3, len(parts))

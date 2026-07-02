@@ -16,14 +16,14 @@ import (
 // ---------- data types ----------
 
 type PublicIPFinding struct {
-	Severity      Severity `json:"severity"`
-	Category      string   `json:"category"`
-	PIPName       string   `json:"pip_name"`
-	ResourceGroup string   `json:"resource_group"`
-	IPAddress     string   `json:"ip_address,omitempty"`
-	SKU           string   `json:"sku"`
-	Description   string   `json:"description"`
-	Recommendation string  `json:"recommendation"`
+	Severity       Severity `json:"severity"`
+	Category       string   `json:"category"`
+	PIPName        string   `json:"pip_name"`
+	ResourceGroup  string   `json:"resource_group"`
+	IPAddress      string   `json:"ip_address,omitempty"`
+	SKU            string   `json:"sku"`
+	Description    string   `json:"description"`
+	Recommendation string   `json:"recommendation"`
 }
 
 type PublicIPSummary struct {
@@ -56,7 +56,7 @@ func init() {
 	publicIPCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runPublicIP(cmd *cobra.Command, args []string) error {
+func runPublicIP(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {

@@ -142,7 +142,7 @@ func TestAnalyzeIAMFindings(t *testing.T) {
 			},
 		},
 		{
-			name: "Overly broad custom role with wildcard is Warning",
+			name:        "Overly broad custom role with wildcard is Warning",
 			assignments: []cmd.ResolvedAssignment{},
 			customRoles: []cmd.CustomRole{
 				{Name: "SuperRole", Actions: []string{"*"}, IsOverly: true},

@@ -62,7 +62,7 @@ func init() {
 
 // ---------- run ----------
 
-func runCostAnalysis(cmd *cobra.Command, args []string) error {
+func runCostAnalysis(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -78,7 +78,7 @@ func runCostAnalysis(cmd *cobra.Command, args []string) error {
 
 	report, err := buildCostReport(ctx, subID, cred, flagCostDays)
 	if err != nil {
-		return fmt.Errorf("cost query failed: %w\n\nNote: Ensure the Service Principal has 'Cost Management Reader' role on the subscription.", err)
+		return fmt.Errorf("cost query failed (ensure the Service Principal has 'Cost Management Reader' role on the subscription): %w", err)
 	}
 
 	switch flagOutput {

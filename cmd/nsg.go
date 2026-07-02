@@ -16,13 +16,13 @@ import (
 // ---------- data types ----------
 
 type NSGFinding struct {
-	Severity      Severity `json:"severity"`
-	Category      string   `json:"category"`
-	NSGName       string   `json:"nsg_name"`
-	ResourceGroup string   `json:"resource_group"`
-	RuleName      string   `json:"rule_name,omitempty"`
-	Description   string   `json:"description"`
-	Recommendation string  `json:"recommendation"`
+	Severity       Severity `json:"severity"`
+	Category       string   `json:"category"`
+	NSGName        string   `json:"nsg_name"`
+	ResourceGroup  string   `json:"resource_group"`
+	RuleName       string   `json:"rule_name,omitempty"`
+	Description    string   `json:"description"`
+	Recommendation string   `json:"recommendation"`
 }
 
 type NSGSummary struct {
@@ -55,17 +55,17 @@ func init() {
 
 // Management ports considered dangerous when open to the internet
 var dangerousPorts = map[int32]string{
-	22:   "SSH",
-	3389: "RDP",
-	445:  "SMB",
-	1433: "SQL Server",
-	3306: "MySQL",
-	5432: "PostgreSQL",
+	22:    "SSH",
+	3389:  "RDP",
+	445:   "SMB",
+	1433:  "SQL Server",
+	3306:  "MySQL",
+	5432:  "PostgreSQL",
 	27017: "MongoDB",
-	6379: "Redis",
+	6379:  "Redis",
 }
 
-func runNSG(cmd *cobra.Command, args []string) error {
+func runNSG(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -262,7 +262,7 @@ func runNSG(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// AnalyzeNSGFindings runs NSG checks on pre-fetched data — no Azure calls.
+// AnalyzeNSGFindings runs NSG checks on pre-fetched data â€” no Azure calls.
 func AnalyzeNSGFindings(nsgs []*armnetwork.SecurityGroup) []NSGFinding {
 	var findings []NSGFinding
 	for _, nsg := range nsgs {
@@ -442,7 +442,7 @@ func printNSGTable(r NSGReport) {
 	fmt.Println()
 
 	if len(r.Findings) == 0 {
-		fmt.Println("  No issues found. 🎉")
+		fmt.Println("  No issues found. ðŸŽ‰")
 		return
 	}
 
@@ -465,11 +465,11 @@ func printNSGTable(r NSGReport) {
 			continue
 		}
 		printed[key] = true
-		icon := "ℹ️"
+		icon := "â„¹ï¸"
 		if f.Severity == Critical {
-			icon = "🔴"
+			icon = "ðŸ”´"
 		} else if f.Severity == Warning {
-			icon = "🟡"
+			icon = "ðŸŸ¡"
 		}
 		fmt.Printf("  %s [%s] %s: %s\n", icon, f.Severity, f.Category, f.Recommendation)
 	}

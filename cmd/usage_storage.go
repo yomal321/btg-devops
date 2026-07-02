@@ -96,9 +96,9 @@ func runStorageUsage(ctx context.Context, subID string, cred *azidentity.Default
 				leaseState = string(*c.Properties.LeaseState)
 			}
 			containers = append(containers, containerInfo{
-				name:        *c.Name,
+				name:         *c.Name,
 				publicAccess: pub,
-				leaseState:  leaseState,
+				leaseState:   leaseState,
 			})
 		}
 	}

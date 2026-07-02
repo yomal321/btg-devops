@@ -22,18 +22,18 @@ var (
 )
 
 type AppTrafficReport struct {
-	Name          string  `json:"name"`
-	ResourceGroup string  `json:"resource_group"`
-	Kind          string  `json:"kind"`
-	State         string  `json:"state"`
-	TotalRequests float64 `json:"total_requests"`
-	BytesReceived float64 `json:"bytes_received"`
-	BytesSent     float64 `json:"bytes_sent"`
-	Http2xx       float64 `json:"http_2xx"`
-	Http4xx       float64 `json:"http_4xx"`
-	Http5xx       float64 `json:"http_5xx"`
-	Status        string  `json:"status"`
-	Recommendation string `json:"recommendation"`
+	Name           string  `json:"name"`
+	ResourceGroup  string  `json:"resource_group"`
+	Kind           string  `json:"kind"`
+	State          string  `json:"state"`
+	TotalRequests  float64 `json:"total_requests"`
+	BytesReceived  float64 `json:"bytes_received"`
+	BytesSent      float64 `json:"bytes_sent"`
+	HTTP2xx        float64 `json:"http_2xx"`
+	HTTP4xx        float64 `json:"http_4xx"`
+	HTTP5xx        float64 `json:"http_5xx"`
+	Status         string  `json:"status"`
+	Recommendation string  `json:"recommendation"`
 }
 
 var appserviceTrafficCmd = &cobra.Command{
@@ -57,7 +57,7 @@ func getSubscriptionID() string {
 	return os.Getenv("AZURE_SUBSCRIPTION_ID")
 }
 
-func runAppServiceTraffic(cmd *cobra.Command, args []string) error {
+func runAppServiceTraffic(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -175,11 +175,11 @@ func runAppServiceTraffic(cmd *cobra.Command, args []string) error {
 			case "BytesSent":
 				report.BytesSent = total
 			case "Http2xx":
-				report.Http2xx = total
+				report.HTTP2xx = total
 			case "Http4xx":
-				report.Http4xx = total
+				report.HTTP4xx = total
 			case "Http5xx":
-				report.Http5xx = total
+				report.HTTP5xx = total
 			}
 		}
 
@@ -201,9 +201,9 @@ func runAppServiceTraffic(cmd *cobra.Command, args []string) error {
 
 		// Check error rate
 		if report.TotalRequests > 0 {
-			errorRate := report.Http5xx / report.TotalRequests * 100
+			errorRate := report.HTTP5xx / report.TotalRequests * 100
 			if errorRate > 10 {
-				report.Recommendation += fmt.Sprintf(" ⚠️  High 5xx error rate (%.1f%%).", errorRate)
+				report.Recommendation += fmt.Sprintf(" âš ï¸  High 5xx error rate (%.1f%%).", errorRate)
 			}
 		}
 
@@ -240,9 +240,9 @@ func ClassifyTrafficStatus(report *AppTrafficReport) {
 		report.Recommendation = "Normal traffic levels."
 	}
 	if report.TotalRequests > 0 {
-		errorRate := report.Http5xx / report.TotalRequests * 100
+		errorRate := report.HTTP5xx / report.TotalRequests * 100
 		if errorRate > 10 {
-			report.Recommendation += fmt.Sprintf(" ⚠️  High 5xx error rate (%.1f%%).", errorRate)
+			report.Recommendation += fmt.Sprintf(" âš ï¸  High 5xx error rate (%.1f%%).", errorRate)
 		}
 	}
 }
@@ -295,7 +295,7 @@ func printTable(reports []AppTrafficReport) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%.0f\t%s\t%s\t%.0f\t%.0f\t%.0f\t%s\t\n",
 			r.Name, r.ResourceGroup, r.State,
 			r.TotalRequests, formatBytes(r.BytesReceived), formatBytes(r.BytesSent),
-			r.Http2xx, r.Http4xx, r.Http5xx, r.Status)
+			r.HTTP2xx, r.HTTP4xx, r.HTTP5xx, r.Status)
 		switch r.Status {
 		case "Idle/Unused":
 			idleCount++
@@ -321,7 +321,7 @@ func printTable(reports []AppTrafficReport) {
 		fmt.Println(strings.Repeat("-", 40))
 		for _, r := range reports {
 			if r.Status != "Active" {
-				fmt.Printf("  • %s: %s\n", r.Name, r.Recommendation)
+				fmt.Printf("  â€¢ %s: %s\n", r.Name, r.Recommendation)
 			}
 		}
 		fmt.Println()

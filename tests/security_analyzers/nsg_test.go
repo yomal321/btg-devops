@@ -37,7 +37,7 @@ func TestAnalyzeNSGFindings(t *testing.T) {
 	inbound := armnetwork.SecurityRuleDirectionInbound
 	allow := armnetwork.SecurityRuleAccessAllow
 	deny := armnetwork.SecurityRuleAccessDeny
-	any := armnetwork.SecurityRuleProtocolAsterisk
+	asterisk := armnetwork.SecurityRuleProtocolAsterisk
 	tcp := armnetwork.SecurityRuleProtocolTCP
 
 	tests := []struct {
@@ -77,8 +77,8 @@ func TestAnalyzeNSGFindings(t *testing.T) {
 			},
 		},
 		{
-			name:          "Any-any allow rule from internet is Critical",
-			nsgs:          []*armnetwork.SecurityGroup{nsgWithRule("nsg1", "rule1", allow, inbound, any, "*", "*")},
+			name: "Any-any allow rule from internet is Critical",
+			nsgs: []*armnetwork.SecurityGroup{nsgWithRule("nsg1", "rule1", allow, inbound, asterisk, "*", "*")},
 			checkFindings: func(t *testing.T, findings []cmd.NSGFinding) {
 				found := false
 				for _, f := range findings {
@@ -91,8 +91,8 @@ func TestAnalyzeNSGFindings(t *testing.T) {
 			},
 		},
 		{
-			name:          "SSH port 22 open to internet is Critical",
-			nsgs:          []*armnetwork.SecurityGroup{nsgWithRule("nsg1", "allow-ssh", allow, inbound, tcp, "*", "22")},
+			name: "SSH port 22 open to internet is Critical",
+			nsgs: []*armnetwork.SecurityGroup{nsgWithRule("nsg1", "allow-ssh", allow, inbound, tcp, "*", "22")},
 			checkFindings: func(t *testing.T, findings []cmd.NSGFinding) {
 				found := false
 				for _, f := range findings {
@@ -106,8 +106,8 @@ func TestAnalyzeNSGFindings(t *testing.T) {
 			},
 		},
 		{
-			name:          "RDP port 3389 open to internet is Critical",
-			nsgs:          []*armnetwork.SecurityGroup{nsgWithRule("nsg1", "allow-rdp", allow, inbound, tcp, "*", "3389")},
+			name: "RDP port 3389 open to internet is Critical",
+			nsgs: []*armnetwork.SecurityGroup{nsgWithRule("nsg1", "allow-rdp", allow, inbound, tcp, "*", "3389")},
 			checkFindings: func(t *testing.T, findings []cmd.NSGFinding) {
 				found := false
 				for _, f := range findings {
@@ -120,8 +120,8 @@ func TestAnalyzeNSGFindings(t *testing.T) {
 			},
 		},
 		{
-			name:          "Deny rule does not produce findings",
-			nsgs:          []*armnetwork.SecurityGroup{nsgWithRule("nsg1", "deny-all", deny, inbound, any, "*", "*")},
+			name: "Deny rule does not produce findings",
+			nsgs: []*armnetwork.SecurityGroup{nsgWithRule("nsg1", "deny-all", deny, inbound, asterisk, "*", "*")},
 			checkFindings: func(t *testing.T, findings []cmd.NSGFinding) {
 				for _, f := range findings {
 					assert.NotEqual(t, "Any-Any Allow Rule", f.Category, "deny rule should not flag Any-Any")
@@ -153,7 +153,7 @@ func TestAnalyzeNSGFindings(t *testing.T) {
 		},
 		{
 			name: "Finding fields are populated",
-			nsgs: []*armnetwork.SecurityGroup{nsgWithRule("my-nsg", "bad-rule", allow, inbound, any, "*", "*")},
+			nsgs: []*armnetwork.SecurityGroup{nsgWithRule("my-nsg", "bad-rule", allow, inbound, asterisk, "*", "*")},
 			checkFindings: func(t *testing.T, findings []cmd.NSGFinding) {
 				found := false
 				for _, f := range findings {

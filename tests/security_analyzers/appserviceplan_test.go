@@ -30,8 +30,8 @@ func TestAnalyzeASPsData(t *testing.T) {
 		checkReport  func(t *testing.T, report cmd.ASPReport)
 	}{
 		{
-			name:        "Empty plan list",
-			plans:       []*armappservice.Plan{},
+			name:  "Empty plan list",
+			plans: []*armappservice.Plan{},
 			checkReport: func(t *testing.T, report cmd.ASPReport) {
 				assert.Equal(t, 0, report.Summary.TotalPlans)
 				assert.Equal(t, 0, len(report.Findings))
@@ -70,7 +70,7 @@ func TestAnalyzeASPsData(t *testing.T) {
 			},
 		},
 		{
-			name: "Premium plan with 1 app is Info (SKU right-sizing)",
+			name:  "Premium plan with 1 app is Info (SKU right-sizing)",
 			plans: []*armappservice.Plan{aspPlan("plan1", "P1V3", "PremiumV3", 1)},
 			planAppCount: map[string]int{
 				"/subscriptions/sub/resourcegroups/rg-test/providers/microsoft.web/serverfarms/plan1": 1,
@@ -87,7 +87,7 @@ func TestAnalyzeASPsData(t *testing.T) {
 			},
 		},
 		{
-			name: "Free tier plan with apps is Warning (No SLA)",
+			name:  "Free tier plan with apps is Warning (No SLA)",
 			plans: []*armappservice.Plan{aspPlan("plan1", "F1", "Free", 1)},
 			planAppCount: map[string]int{
 				"/subscriptions/sub/resourcegroups/rg-test/providers/microsoft.web/serverfarms/plan1": 2,
@@ -104,7 +104,7 @@ func TestAnalyzeASPsData(t *testing.T) {
 			},
 		},
 		{
-			name: "Plan with 4 or more workers flags Autoscale Info",
+			name:  "Plan with 4 or more workers flags Autoscale Info",
 			plans: []*armappservice.Plan{aspPlan("plan1", "S2", "Standard", 4)},
 			planAppCount: map[string]int{
 				"/subscriptions/sub/resourcegroups/rg-test/providers/microsoft.web/serverfarms/plan1": 1,
@@ -121,8 +121,8 @@ func TestAnalyzeASPsData(t *testing.T) {
 			},
 		},
 		{
-			name: "Estimated waste is calculated for empty paid plan",
-			plans: []*armappservice.Plan{aspPlan("plan1", "S1", "Standard", 1)},
+			name:         "Estimated waste is calculated for empty paid plan",
+			plans:        []*armappservice.Plan{aspPlan("plan1", "S1", "Standard", 1)},
 			planAppCount: map[string]int{},
 			checkReport: func(t *testing.T, report cmd.ASPReport) {
 				assert.Greater(t, report.Summary.EstimatedWasteUSD, 0.0)
@@ -142,8 +142,8 @@ func TestAnalyzeASPsData(t *testing.T) {
 			},
 		},
 		{
-			name: "Finding fields are populated",
-			plans: []*armappservice.Plan{aspPlan("myplan", "S2", "Standard", 1)},
+			name:         "Finding fields are populated",
+			plans:        []*armappservice.Plan{aspPlan("myplan", "S2", "Standard", 1)},
 			planAppCount: map[string]int{},
 			checkReport: func(t *testing.T, report cmd.ASPReport) {
 				assert.Greater(t, len(report.Findings), 0)

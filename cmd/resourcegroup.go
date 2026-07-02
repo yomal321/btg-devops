@@ -62,7 +62,7 @@ var rgNamingRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
 // Required tags that resource groups should have
 var requiredTags = []string{"environment", "owner", "project"}
 
-func runResourceGroup(cmd *cobra.Command, args []string) error {
+func runResourceGroup(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -231,7 +231,7 @@ type RGInput struct {
 	HasLock  bool
 }
 
-// AnalyzeRGFindings runs resource group checks on pre-fetched data — no Azure calls.
+// AnalyzeRGFindings runs resource group checks on pre-fetched data â€” no Azure calls.
 func AnalyzeRGFindings(rgs []RGInput) []RGFinding {
 	var findings []RGFinding
 	for _, rg := range rgs {
@@ -323,9 +323,9 @@ func (r *RGReport) addRGFinding(f RGFinding) {
 
 func printRGReport(report RGReport) {
 	fmt.Println()
-	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
-	fmt.Println("║           RESOURCE GROUP ANALYSIS REPORT                     ║")
-	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
+	fmt.Println("â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—")
+	fmt.Println("â•‘           RESOURCE GROUP ANALYSIS REPORT                     â•‘")
+	fmt.Println("â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
 	fmt.Println()
 
 	fmt.Printf("  Total Resource Groups:     %d\n", report.Summary.TotalResourceGroups)
@@ -344,11 +344,11 @@ func printRGReport(report RGReport) {
 	fmt.Println()
 
 	if len(report.Findings) == 0 {
-		fmt.Println("  ✅ No issues found!")
+		fmt.Println("  âœ… No issues found!")
 		return
 	}
 
-	fmt.Println("  ── Findings ──")
+	fmt.Println("  â”€â”€ Findings â”€â”€")
 	fmt.Println()
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
 	fmt.Fprintf(w, "  SEVERITY\tCATEGORY\tRESOURCE GROUP\tLOCATION\tDESCRIPTION\n")
@@ -360,12 +360,12 @@ func printRGReport(report RGReport) {
 	w.Flush()
 	fmt.Println()
 
-	fmt.Println("  ── Recommendations ──")
+	fmt.Println("  â”€â”€ Recommendations â”€â”€")
 	fmt.Println()
 	seen := map[string]bool{}
 	for _, f := range report.Findings {
 		if !seen[f.Recommendation] {
-			fmt.Printf("  • %s\n", f.Recommendation)
+			fmt.Printf("  â€¢ %s\n", f.Recommendation)
 			seen[f.Recommendation] = true
 		}
 	}

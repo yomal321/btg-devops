@@ -38,7 +38,7 @@ func init() {
 
 // ---------- entry point ----------
 
-func runIdle(cmd *cobra.Command, args []string) error {
+func runIdle(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {

@@ -43,9 +43,9 @@ type IAMSummary struct {
 }
 
 type IAMReport struct {
-	Summary     IAMSummary    `json:"summary"`
-	Findings    []Finding     `json:"findings"`
-	CustomRoles []CustomRole  `json:"custom_roles,omitempty"`
+	Summary     IAMSummary   `json:"summary"`
+	Findings    []Finding    `json:"findings"`
+	CustomRoles []CustomRole `json:"custom_roles,omitempty"`
 }
 
 type CustomRole struct {
@@ -86,7 +86,7 @@ func init() {
 	iamCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runIAM(cmd *cobra.Command, args []string) error {
+func runIAM(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -334,7 +334,7 @@ func runIAM(cmd *cobra.Command, args []string) error {
 
 	// 5e. Classic admin roles
 	classicRoles := map[string]bool{
-		"CoAdministrator":    true,
+		"CoAdministrator":       true,
 		"Service Administrator": true,
 		"Account Administrator": true,
 	}
@@ -502,7 +502,7 @@ func lastSegment(s string) string {
 }
 
 // AnalyzeIAMFindings runs the IAM checks on pre-fetched data — no Azure calls.
-func AnalyzeIAMFindings(assignments []ResolvedAssignment, customRoles []CustomRole, subScope string) []Finding {
+func AnalyzeIAMFindings(assignments []ResolvedAssignment, customRoles []CustomRole, _ string) []Finding {
 	var findings []Finding
 
 	subOwnerCount := 0

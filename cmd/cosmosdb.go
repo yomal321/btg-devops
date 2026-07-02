@@ -3,11 +3,11 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"time"
 	"fmt"
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v3"
@@ -52,7 +52,7 @@ func init() {
 	cosmosdbCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runCosmosDB(cmd *cobra.Command, args []string) error {
+func runCosmosDB(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -130,7 +130,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 				Category:       "Public Network Access",
 				AccountName:    name,
 				ResourceGroup:  rg,
-				Description:    "Public network access is enabled — account is accessible from the internet",
+				Description:    "Public network access is enabled â€” account is accessible from the internet",
 				Recommendation: "Disable public network access and use private endpoints or IP firewall rules.",
 			})
 		}
@@ -143,7 +143,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 					Category:       "No IP Firewall Rules",
 					AccountName:    name,
 					ResourceGroup:  rg,
-					Description:    "No IP firewall rules configured — all public IPs can access the account",
+					Description:    "No IP firewall rules configured â€” all public IPs can access the account",
 					Recommendation: "Configure IP firewall rules to restrict access to known IP ranges.",
 				})
 			}
@@ -161,7 +161,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 			})
 		}
 
-		// 4. Backup policy — check if continuous or periodic
+		// 4. Backup policy â€” check if continuous or periodic
 		if props.BackupPolicy != nil {
 			switch bp := props.BackupPolicy.(type) {
 			case *armcosmos.PeriodicModeBackupPolicy:
@@ -174,7 +174,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 							Category:       "Infrequent Backups",
 							AccountName:    name,
 							ResourceGroup:  rg,
-							Description:    fmt.Sprintf("Backup interval is %d minutes (>4 hours) — risk of data loss", *interval),
+							Description:    fmt.Sprintf("Backup interval is %d minutes (>4 hours) â€” risk of data loss", *interval),
 							Recommendation: "Reduce backup interval or switch to continuous backup for point-in-time restore.",
 						})
 					}
@@ -194,7 +194,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 					Category:       "Periodic Backup Mode",
 					AccountName:    name,
 					ResourceGroup:  rg,
-					Description:    "Using periodic backup mode — no point-in-time restore capability",
+					Description:    "Using periodic backup mode â€” no point-in-time restore capability",
 					Recommendation: "Consider switching to continuous backup for point-in-time restore (up to 30 days).",
 				})
 			}
@@ -209,7 +209,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 					Category:       "Strong Consistency",
 					AccountName:    name,
 					ResourceGroup:  rg,
-					Description:    "Using Strong consistency — highest RU cost and latency",
+					Description:    "Using Strong consistency â€” highest RU cost and latency",
 					Recommendation: "Evaluate if Session or Bounded Staleness consistency would meet requirements at lower cost.",
 				})
 			}
@@ -229,14 +229,14 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// 7. Single region — no geo-redundancy
+		// 7. Single region â€” no geo-redundancy
 		if len(props.Locations) <= 1 {
 			findings = append(findings, CosmosDBFinding{
 				Severity:       Info,
 				Category:       "Single Region",
 				AccountName:    name,
 				ResourceGroup:  rg,
-				Description:    "Account is deployed in a single region — no geo-redundancy",
+				Description:    "Account is deployed in a single region â€” no geo-redundancy",
 				Recommendation: "Add a secondary region for disaster recovery and high availability.",
 			})
 		}
@@ -249,7 +249,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 					Category:       "Automatic Failover Disabled",
 					AccountName:    name,
 					ResourceGroup:  rg,
-					Description:    "Multi-region account without automatic failover — manual intervention needed during outages",
+					Description:    "Multi-region account without automatic failover â€” manual intervention needed during outages",
 					Recommendation: "Enable automatic failover for seamless region failover during outages.",
 				})
 			}
@@ -264,7 +264,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 						Category:       "Wildcard CORS",
 						AccountName:    name,
 						ResourceGroup:  rg,
-						Description:    "CORS allows all origins (*) — potential security risk",
+						Description:    "CORS allows all origins (*) â€” potential security risk",
 						Recommendation: "Restrict CORS allowed origins to specific, trusted domains.",
 					})
 				}
@@ -322,7 +322,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 								Category:       "Manual Throughput (Database)",
 								AccountName:    name,
 								ResourceGroup:  rg,
-								Description:    fmt.Sprintf("Database '%s' uses manual throughput (%d RU/s) — may over-provision during low usage", dbName, *res.Throughput),
+								Description:    fmt.Sprintf("Database '%s' uses manual throughput (%d RU/s) â€” may over-provision during low usage", dbName, *res.Throughput),
 								Recommendation: fmt.Sprintf("Consider enabling autoscale on database '%s' to reduce costs during low-traffic periods.", dbName),
 							})
 						}
@@ -334,7 +334,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 									Category:       "High Autoscale Max (Database)",
 									AccountName:    name,
 									ResourceGroup:  rg,
-									Description:    fmt.Sprintf("Database '%s' has autoscale max of %d RU/s — verify this is needed", dbName, maxRU),
+									Description:    fmt.Sprintf("Database '%s' has autoscale max of %d RU/s â€” verify this is needed", dbName, maxRU),
 									Recommendation: fmt.Sprintf("Review if database '%s' needs %d max RU/s or if it can be lowered to reduce costs.", dbName, maxRU),
 								})
 							}
@@ -419,7 +419,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// AnalyzeCosmosDBFindings runs CosmosDB checks on pre-fetched data — no Azure calls.
+// AnalyzeCosmosDBFindings runs CosmosDB checks on pre-fetched data â€” no Azure calls.
 // Skips SQL throughput checks (require Azure client).
 func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []CosmosDBFinding {
 	var findings []CosmosDBFinding
@@ -435,7 +435,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 			findings = append(findings, CosmosDBFinding{
 				Severity: Warning, Category: "Public Network Access",
 				AccountName: name, ResourceGroup: rg,
-				Description:    "Public network access is enabled — account is accessible from the internet",
+				Description:    "Public network access is enabled â€” account is accessible from the internet",
 				Recommendation: "Disable public network access and use private endpoints or IP firewall rules.",
 			})
 		}
@@ -445,7 +445,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 				findings = append(findings, CosmosDBFinding{
 					Severity: Warning, Category: "No IP Firewall Rules",
 					AccountName: name, ResourceGroup: rg,
-					Description:    "No IP firewall rules configured — all public IPs can access the account",
+					Description:    "No IP firewall rules configured â€” all public IPs can access the account",
 					Recommendation: "Configure IP firewall rules to restrict access to known IP ranges.",
 				})
 			}
@@ -470,7 +470,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 						findings = append(findings, CosmosDBFinding{
 							Severity: Warning, Category: "Infrequent Backups",
 							AccountName: name, ResourceGroup: rg,
-							Description:    fmt.Sprintf("Backup interval is %d minutes (>4 hours) — risk of data loss", *interval),
+							Description:    fmt.Sprintf("Backup interval is %d minutes (>4 hours) â€” risk of data loss", *interval),
 							Recommendation: "Reduce backup interval or switch to continuous backup for point-in-time restore.",
 						})
 					}
@@ -486,7 +486,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 				findings = append(findings, CosmosDBFinding{
 					Severity: Info, Category: "Periodic Backup Mode",
 					AccountName: name, ResourceGroup: rg,
-					Description:    "Using periodic backup mode — no point-in-time restore capability",
+					Description:    "Using periodic backup mode â€” no point-in-time restore capability",
 					Recommendation: "Consider switching to continuous backup for point-in-time restore (up to 30 days).",
 				})
 			}
@@ -497,7 +497,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 				findings = append(findings, CosmosDBFinding{
 					Severity: Info, Category: "Strong Consistency",
 					AccountName: name, ResourceGroup: rg,
-					Description:    "Using Strong consistency — highest RU cost and latency",
+					Description:    "Using Strong consistency â€” highest RU cost and latency",
 					Recommendation: "Evaluate if Session or Bounded Staleness consistency would meet requirements at lower cost.",
 				})
 			}
@@ -518,7 +518,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 			findings = append(findings, CosmosDBFinding{
 				Severity: Info, Category: "Single Region",
 				AccountName: name, ResourceGroup: rg,
-				Description:    "Account is deployed in a single region — no geo-redundancy",
+				Description:    "Account is deployed in a single region â€” no geo-redundancy",
 				Recommendation: "Add a secondary region for disaster recovery and high availability.",
 			})
 		}
@@ -528,7 +528,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 				findings = append(findings, CosmosDBFinding{
 					Severity: Warning, Category: "Automatic Failover Disabled",
 					AccountName: name, ResourceGroup: rg,
-					Description:    "Multi-region account without automatic failover — manual intervention needed during outages",
+					Description:    "Multi-region account without automatic failover â€” manual intervention needed during outages",
 					Recommendation: "Enable automatic failover for seamless region failover during outages.",
 				})
 			}
@@ -540,7 +540,7 @@ func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []
 					findings = append(findings, CosmosDBFinding{
 						Severity: Warning, Category: "Wildcard CORS",
 						AccountName: name, ResourceGroup: rg,
-						Description:    "CORS allows all origins (*) — potential security risk",
+						Description:    "CORS allows all origins (*) â€” potential security risk",
 						Recommendation: "Restrict CORS allowed origins to specific, trusted domains.",
 					})
 				}
@@ -593,7 +593,7 @@ func printCosmosDBTable(r CosmosDBReport) {
 	fmt.Println()
 
 	if len(r.Findings) == 0 {
-		fmt.Println("  No issues found. 🎉")
+		fmt.Println("  No issues found. ðŸŽ‰")
 		return
 	}
 
@@ -616,11 +616,11 @@ func printCosmosDBTable(r CosmosDBReport) {
 			continue
 		}
 		printed[key] = true
-		icon := "ℹ️"
+		icon := "â„¹ï¸"
 		if f.Severity == Critical {
-			icon = "🔴"
+			icon = "ðŸ”´"
 		} else if f.Severity == Warning {
-			icon = "🟡"
+			icon = "ðŸŸ¡"
 		}
 		fmt.Printf("  %s [%s] %s: %s\n", icon, f.Severity, f.Category, f.Recommendation)
 	}

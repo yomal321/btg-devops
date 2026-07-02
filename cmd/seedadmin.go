@@ -35,7 +35,7 @@ func init() {
 	seedAdminCmd.Flags().StringVar(&seedPassword, "password", "", "Admin password (or set ADMIN_PASSWORD)")
 }
 
-func runSeedAdmin(cmd *cobra.Command, args []string) error {
+func runSeedAdmin(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
 	// Resolve email and password from flags or env

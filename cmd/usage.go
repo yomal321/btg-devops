@@ -122,7 +122,7 @@ var usageTypeAliases = map[string]string{
 
 // ---------- entry point ----------
 
-func runUsage(cmd *cobra.Command, args []string) error {
+func runUsage(_ *cobra.Command, _ []string) error {
 	if !flagUsageAll && flagUsageType == "" && flagResourceName == "" {
 		return fmt.Errorf("one of --resource <name>, --type <type>, or --all is required\n\nSupported types: cosmosdb, storage, appserviceplan, keyvault, acr, appservice, functions, publicip, cognitiveservices")
 	}
@@ -819,13 +819,13 @@ func sortMetersByCost(meters []MeterCost) {
 }
 
 func maxMeterCost(meters []MeterCost) float64 {
-	var max float64
+	var maxCost float64
 	for _, m := range meters {
-		if m.Cost > max {
-			max = m.Cost
+		if m.Cost > maxCost {
+			maxCost = m.Cost
 		}
 	}
-	return max
+	return maxCost
 }
 
 func periodString(days int) string {
@@ -919,10 +919,10 @@ func printUsageReport(r *UsageReport) {
 func CalcWasteScore(cost, primaryPct, dailyActivity float64) (string, string) {
 	return calcWasteScore(cost, primaryPct, dailyActivity)
 }
-func CostSeverity(cost float64) Severity      { return costSeverity(cost) }
-func RenderBar(cost, maxCost float64, width int) string { return renderBar(cost, maxCost, width) }
-func SortMetersByCost(meters []MeterCost)      { sortMetersByCost(meters) }
-func MaxMeterCost(meters []MeterCost) float64  { return maxMeterCost(meters) }
+func CostSeverity(cost float64) Severity                    { return costSeverity(cost) }
+func RenderBar(cost, maxCost float64, width int) string     { return renderBar(cost, maxCost, width) }
+func SortMetersByCost(meters []MeterCost)                   { sortMetersByCost(meters) }
+func MaxMeterCost(meters []MeterCost) float64               { return maxMeterCost(meters) }
 func BuildUtilizationString(util map[string]float64) string { return buildUtilizationString(util) }
 
 var UsageTypeAliases = usageTypeAliases

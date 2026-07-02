@@ -41,12 +41,12 @@ type FunctionsReport struct {
 
 // Current (recommended) runtime versions as of early 2026
 var currentRuntimeVersions = map[string]string{
-	"dotnet":         "v8.0",
+	"dotnet":          "v8.0",
 	"dotnet-isolated": "v8.0",
-	"node":           "~20",
-	"python":         "3.11",
-	"java":           "17",
-	"powershell":     "7.4",
+	"node":            "~20",
+	"python":          "3.11",
+	"java":            "17",
+	"powershell":      "7.4",
 }
 
 // ---------- command ----------
@@ -65,7 +65,7 @@ func init() {
 	functionsCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
 }
 
-func runFunctions(cmd *cobra.Command, args []string) error {
+func runFunctions(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	subID := getSubscriptionID()
 	if subID == "" {
@@ -235,7 +235,7 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 				Category:       "HTTPS Not Enforced",
 				FunctionApp:    name,
 				ResourceGrp:    rg,
-				Description:    "HTTPS-only is not enabled — HTTP traffic is allowed",
+				Description:    "HTTPS-only is not enabled â€” HTTP traffic is allowed",
 				Recommendation: "Enable HTTPS Only to ensure all traffic is encrypted in transit.",
 			})
 		}
@@ -248,7 +248,7 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 				Category:       "No Managed Identity",
 				FunctionApp:    name,
 				ResourceGrp:    rg,
-				Description:    "No managed identity configured — likely using connection strings or keys for auth",
+				Description:    "No managed identity configured â€” likely using connection strings or keys for auth",
 				Recommendation: "Enable system-assigned or user-assigned managed identity for secure, keyless authentication to Azure services.",
 			})
 		}
@@ -293,7 +293,7 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 							Category:       "Always-On Disabled",
 							FunctionApp:    name,
 							ResourceGrp:    rg,
-							Description:    fmt.Sprintf("Always-On is disabled on %s plan (SKU: %s) — may cause cold starts", skuTier, skuName),
+							Description:    fmt.Sprintf("Always-On is disabled on %s plan (SKU: %s) â€” may cause cold starts", skuTier, skuName),
 							Recommendation: "Enable Always-On for dedicated/premium plans to avoid cold starts and idle timeouts.",
 						})
 					}
@@ -306,7 +306,7 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 						Category:       "Consumption Plan",
 						FunctionApp:    name,
 						ResourceGrp:    rg,
-						Description:    "Running on Consumption plan — subject to cold starts and 5-minute timeout",
+						Description:    "Running on Consumption plan â€” subject to cold starts and 5-minute timeout",
 						Recommendation: "Consider Premium plan (EP1+) if you need predictable latency, VNET integration, or longer execution times.",
 					})
 				}
@@ -320,7 +320,7 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 							FunctionApp:    name,
 							ResourceGrp:    rg,
 							Description:    "Running on Premium plan but no VNET integration configured",
-							Recommendation: "Premium plans support VNET integration — configure it if you need private access to backend services.",
+							Recommendation: "Premium plans support VNET integration â€” configure it if you need private access to backend services.",
 						})
 					}
 				}
@@ -362,7 +362,7 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 				FunctionApp:    name,
 				ResourceGrp:    rg,
 				Description:    "Remote debugging is enabled in production",
-				Recommendation: "Disable remote debugging — it opens additional ports and should only be used during active debugging sessions.",
+				Recommendation: "Disable remote debugging â€” it opens additional ports and should only be used during active debugging sessions.",
 			})
 		}
 
@@ -405,26 +405,26 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 
 // FunctionAppInput consolidates all fields needed for testable analysis.
 type FunctionAppInput struct {
-	Name               string
-	ResourceGroup      string
-	Kind               string
-	State              string
-	HTTPSOnly          bool
-	HasManagedIdentity bool
-	ExtensionVersion   string
-	WorkerRuntime      string
-	Runtime            string
-	RuntimeVersion     string
-	AlwaysOn           bool
-	IsConsumptionPlan  bool
-	IsPremiumPlan      bool
-	HasVNETIntegration bool
-	MinTLSVersion      string
+	Name                   string
+	ResourceGroup          string
+	Kind                   string
+	State                  string
+	HTTPSOnly              bool
+	HasManagedIdentity     bool
+	ExtensionVersion       string
+	WorkerRuntime          string
+	Runtime                string
+	RuntimeVersion         string
+	AlwaysOn               bool
+	IsConsumptionPlan      bool
+	IsPremiumPlan          bool
+	HasVNETIntegration     bool
+	MinTLSVersion          string
 	RemoteDebuggingEnabled bool
-	FtpsState          string
+	FtpsState              string
 }
 
-// AnalyzeFunctionsData runs function app checks on pre-built input — no Azure calls.
+// AnalyzeFunctionsData runs function app checks on pre-built input â€” no Azure calls.
 func AnalyzeFunctionsData(apps []FunctionAppInput) []FunctionsFinding {
 	var findings []FunctionsFinding
 	for _, app := range apps {
@@ -460,7 +460,7 @@ func AnalyzeFunctionsData(apps []FunctionAppInput) []FunctionsFinding {
 			findings = append(findings, FunctionsFinding{
 				Severity: Warning, Category: "HTTPS Not Enforced",
 				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
-				Description:    "HTTPS-only is not enabled — HTTP traffic is allowed",
+				Description:    "HTTPS-only is not enabled â€” HTTP traffic is allowed",
 				Recommendation: "Enable HTTPS Only to ensure all traffic is encrypted in transit.",
 			})
 		}
@@ -469,7 +469,7 @@ func AnalyzeFunctionsData(apps []FunctionAppInput) []FunctionsFinding {
 			findings = append(findings, FunctionsFinding{
 				Severity: Warning, Category: "No Managed Identity",
 				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
-				Description:    "No managed identity configured — likely using connection strings or keys for auth",
+				Description:    "No managed identity configured â€” likely using connection strings or keys for auth",
 				Recommendation: "Enable system-assigned or user-assigned managed identity for secure, keyless authentication to Azure services.",
 			})
 		}
@@ -478,7 +478,7 @@ func AnalyzeFunctionsData(apps []FunctionAppInput) []FunctionsFinding {
 			findings = append(findings, FunctionsFinding{
 				Severity: Warning, Category: "Always-On Disabled",
 				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
-				Description:    "Always-On is disabled on dedicated/premium plan — may cause cold starts",
+				Description:    "Always-On is disabled on dedicated/premium plan â€” may cause cold starts",
 				Recommendation: "Enable Always-On for dedicated/premium plans to avoid cold starts and idle timeouts.",
 			})
 		}
@@ -487,7 +487,7 @@ func AnalyzeFunctionsData(apps []FunctionAppInput) []FunctionsFinding {
 			findings = append(findings, FunctionsFinding{
 				Severity: Info, Category: "Consumption Plan",
 				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
-				Description:    "Running on Consumption plan — subject to cold starts and 5-minute timeout",
+				Description:    "Running on Consumption plan â€” subject to cold starts and 5-minute timeout",
 				Recommendation: "Consider Premium plan (EP1+) if you need predictable latency, VNET integration, or longer execution times.",
 			})
 		}
@@ -497,7 +497,7 @@ func AnalyzeFunctionsData(apps []FunctionAppInput) []FunctionsFinding {
 				Severity: Info, Category: "Premium Without VNET",
 				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
 				Description:    "Running on Premium plan but no VNET integration configured",
-				Recommendation: "Premium plans support VNET integration — configure it if you need private access to backend services.",
+				Recommendation: "Premium plans support VNET integration â€” configure it if you need private access to backend services.",
 			})
 		}
 
@@ -524,7 +524,7 @@ func AnalyzeFunctionsData(apps []FunctionAppInput) []FunctionsFinding {
 				Severity: Critical, Category: "Remote Debugging Enabled",
 				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
 				Description:    "Remote debugging is enabled in production",
-				Recommendation: "Disable remote debugging — it opens additional ports and should only be used during active debugging sessions.",
+				Recommendation: "Disable remote debugging â€” it opens additional ports and should only be used during active debugging sessions.",
 			})
 		}
 
@@ -584,7 +584,7 @@ func printFunctionsTable(r FunctionsReport) {
 	fmt.Println()
 
 	if len(r.Findings) == 0 {
-		fmt.Println("  No issues found. 🎉")
+		fmt.Println("  No issues found. ðŸŽ‰")
 		return
 	}
 
@@ -607,11 +607,11 @@ func printFunctionsTable(r FunctionsReport) {
 			continue
 		}
 		printed[key] = true
-		icon := "ℹ️"
+		icon := "â„¹ï¸"
 		if f.Severity == Critical {
-			icon = "🔴"
+			icon = "ðŸ”´"
 		} else if f.Severity == Warning {
-			icon = "🟡"
+			icon = "ðŸŸ¡"
 		}
 		fmt.Printf("  %s [%s] %s: %s\n", icon, f.Severity, f.Category, f.Recommendation)
 	}

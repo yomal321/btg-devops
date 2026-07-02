@@ -36,23 +36,23 @@ type analyzerDef struct {
 }
 
 var allAnalyzers = []analyzerDef{
-	{"appservice_traffic", "App Service Traffic",    runAppServiceTraffic},
-	{"iam",               "IAM (RBAC)",              runIAM},
-	{"storage",           "Storage Accounts",        runStorage},
-	{"nsg",               "Network Security Groups", runNSG},
-	{"acr",               "Container Registries",    runACR},
-	{"cosmosdb",          "Cosmos DB",               runCosmosDB},
-	{"keyvault",          "Key Vaults",              runKeyVault},
-	{"functions",         "Azure Functions",         runFunctions},
-	{"publicip",          "Public IP Addresses",     runPublicIP},
-	{"appserviceplan",    "App Service Plans",       runAppServicePlan},
-	{"cognitiveservices", "Cognitive Services",      runCognitiveServices},
-	{"resourcegroup",     "Resource Groups",         runResourceGroup},
+	{"appservice_traffic", "App Service Traffic", runAppServiceTraffic},
+	{"iam", "IAM (RBAC)", runIAM},
+	{"storage", "Storage Accounts", runStorage},
+	{"nsg", "Network Security Groups", runNSG},
+	{"acr", "Container Registries", runACR},
+	{"cosmosdb", "Cosmos DB", runCosmosDB},
+	{"keyvault", "Key Vaults", runKeyVault},
+	{"functions", "Azure Functions", runFunctions},
+	{"publicip", "Public IP Addresses", runPublicIP},
+	{"appserviceplan", "App Service Plans", runAppServicePlan},
+	{"cognitiveservices", "Cognitive Services", runCognitiveServices},
+	{"resourcegroup", "Resource Groups", runResourceGroup},
 }
 
 // ---------- entry point ----------
 
-func runAll(cmd *cobra.Command, args []string) error {
+func runAll(_ *cobra.Command, _ []string) error {
 	subID := getSubscriptionID()
 	if subID == "" {
 		return fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
