@@ -12,3 +12,6 @@ btg-devops/btg-devops
 # build output
 dist/
 bin/
+
+# personal notes
+steps done  doc/
