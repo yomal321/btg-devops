@@ -1,0 +1,22 @@
+# compiled binaries
+btg-devops
+btg-devops.exe
+testextractor.exe
+tet
+*.exe
+*.exe~
+
+# environment variables / secrets
+.env
+.env.*
+*.env
+
+# build output
+dist/
+bin/
+
+# personal notes
+steps done  doc/
+
+# local tooling
+.claude/
