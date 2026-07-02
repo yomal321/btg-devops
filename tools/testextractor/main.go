@@ -87,7 +87,7 @@ func main() {
 		result[e.name] = data
 	}
 
-	fmt.Fprintln(os.Stderr, "\nDone. Clean JSON output:\n")
+	fmt.Fprintln(os.Stderr, "\nDone. Clean JSON output:")
 	out, _ := json.MarshalIndent(result, "", "  ")
 	fmt.Println(string(out))
 }
