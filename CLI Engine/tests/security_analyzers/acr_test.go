@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-//test helper functions to create mock ACR registries with specific properties for testing
+
 
 func acrRegistry(name string, sku armcontainerregistry.SKUName, props *armcontainerregistry.RegistryProperties) *armcontainerregistry.Registry {
 	id := "/subscriptions/sub/resourceGroups/rg-test/providers/Microsoft.ContainerRegistry/registries/" + name
