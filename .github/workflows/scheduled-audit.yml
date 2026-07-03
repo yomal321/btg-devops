@@ -1,0 +1,57 @@
+name: Scheduled Azure Audit
+
+on:
+  schedule:
+    # Runs every day at 08:00 UTC
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      trigger_label:
+        description: 'Trigger type (leave as "manual" for manual runs)'
+        required: false
+        default: 'manual'
+
+jobs:
+  collect:
+    name: Collect Azure Resource Data
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: CLI Engine
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.6'
+          cache: true
+          cache-dependency-path: CLI Engine/go.sum
+
+      - name: Build CLI
+        run: go build -o btg-devops .
+
+      - name: Determine trigger type
+        id: trigger
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "type=scheduled" >> $GITHUB_OUTPUT
+          else
+            echo "type=${{ github.event.inputs.trigger_label || 'manual' }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run audit collection
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SECRET_PROVIDER: ${{ secrets.SECRET_PROVIDER }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+        run: |
+          ./btg-devops collect \
+            --trigger "${{ steps.trigger.outputs.type }}"
+
+      - name: Report failure
+        if: failure()
+        run: |
+          echo "::error::Azure audit collection failed. Check logs above for details."
