@@ -15,6 +15,9 @@ tet
 dist/
 bin/
 
+# auto-generated docs
+CHANGELOG.md
+
 # personal notes
 steps done  doc/
 
