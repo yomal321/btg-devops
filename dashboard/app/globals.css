@@ -1,26 +1,206 @@
 @import "tailwindcss";
 
+/* ── design tokens ─────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --sidebar-bg: #07090f;
+  --bg: #0c1017;
+  --card: #141a25;
+  --card-hover: #1a2235;
+  --hover: rgba(255, 255, 255, 0.04);
+  --input-bg: rgba(255, 255, 255, 0.03);
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.1);
+  --radius: 10px;
+  --t1: #e2e8f0;
+  --t2: #94a3b8;
+  --t3: #64748b;
+  --t4: #475569;
+  --acc: #60a5fa;
+  --acc-soft: rgba(96, 165, 250, 0.08);
+  --panel: #111827;
+  --chart-grid: rgba(255, 255, 255, 0.05);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+html.light {
+  --sidebar-bg: #ffffff;
+  --bg: #f1f5f9;
+  --card: #ffffff;
+  --card-hover: #f8fafc;
+  --hover: rgba(15, 23, 42, 0.04);
+  --input-bg: rgba(15, 23, 42, 0.03);
+  --border: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.14);
+  --t1: #1e293b;
+  --t2: #64748b;
+  --t3: #94a3b8;
+  --t4: #b2bdcc;
+  --acc: #2563eb;
+  --acc-soft: rgba(37, 99, 235, 0.08);
+  --panel: #ffffff;
+  --chart-grid: rgba(15, 23, 42, 0.06);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ── Tailwind theme extension (Tailwind v4) ─────────────────── */
+@theme {
+  --color-surface-1: var(--sidebar-bg);
+  --color-surface-2: var(--bg);
+  --color-surface-3: var(--card);
+  --color-surface-4: var(--card-hover);
+}
+
+/* ── base ───────────────────────────────────────────────────── */
+@layer base {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--t1);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
+
+  .t1 { color: var(--t1); }
+  .t2 { color: var(--t2); }
+  .t3 { color: var(--t3); }
+  .t4 { color: var(--t4); }
+  .acc { color: var(--acc); }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── components ─────────────────────────────────────────────── */
+@layer components {
+  .glass {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(8px);
+  }
+
+  .field {
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--t1);
+    padding: 0.625rem 0.875rem;
+    width: 100%;
+    font-size: 0.875rem;
+    transition: border-color 0.15s;
+    outline: none;
+  }
+  .field:focus { border-color: var(--acc); }
+  .field::placeholder { color: var(--t4); }
+
+  select {
+    background-color: var(--panel);
+    color: var(--t1);
+    cursor: pointer;
+  }
+  select option {
+    background: var(--panel);
+    color: var(--t1);
+  }
+  select option:disabled { color: var(--t4); }
+
+  .btn-primary {
+    background: var(--acc);
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--t2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn-ghost:hover { background: var(--hover); color: var(--t1); }
+
+  .btn-danger {
+    background: transparent;
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-danger:hover { background: rgba(239, 68, 68, 0.08); }
+
+  .bdg {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .bdg-info    { background: rgba(96, 165, 250, 0.12); color: #60a5fa; }
+  .bdg-success { background: rgba(34, 197, 94, 0.12);  color: #22c55e; }
+  .bdg-warning { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+  .bdg-error   { background: rgba(239, 68, 68, 0.12);  color: #ef4444; }
+  .bdg-primary { background: rgba(96, 165, 250, 0.12); color: #60a5fa; }
+  .bdg-purple  { background: rgba(168, 85, 247, 0.12); color: #a855f7; }
+  .bdg-muted   { background: rgba(100, 116, 139, 0.12); color: #64748b; }
+
+  .row-hover { transition: background 0.12s; }
+  .row-hover:hover { background: var(--hover); }
+
+  .animate-fade-in  { animation: fadeIn 0.2s ease-out; }
+  .animate-scale-in { animation: scaleIn 0.2s ease-out; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.97); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to   { background-position: -200% 0; }
+  }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--input-bg) 25%, var(--hover) 50%, var(--input-bg) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  .glass-hover { transition: transform 0.15s ease, border-color 0.15s ease; }
+  .glass-hover:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
+  }
+
+  .row-hover:hover td:first-child { box-shadow: inset 2px 0 0 var(--acc); }
+
+  .stagger > * { animation: fadeIn 0.2s ease-out both; }
+  .stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .stagger > *:nth-child(6) { animation-delay: 200ms; }
+  .stagger > *:nth-child(7) { animation-delay: 240ms; }
+  .stagger > *:nth-child(8) { animation-delay: 280ms; }
 }

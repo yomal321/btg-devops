@@ -1,65 +1,223 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
+import { useCallback, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { ArrowRight, Check } from 'lucide-react'
+import { Header } from './components/Header'
+import { KPICard } from './components/KPICard'
+import { ResourceChart } from './components/ResourceChart'
+import { Badge } from './components/Badge'
+import { KPISkeletonRow, ChartSkeleton, TableSkeleton } from './components/Skeleton'
+import { TrendChart } from './components/TrendChart'
+import { TopIssues } from './components/TopIssues'
+import { api } from './lib/api'
+import { useAuth } from './lib/auth'
+import { formatNumber, shortId, statusConfig, triggerConfig } from './lib/utils'
+import type { Audit, Subscription } from './types'
+
+function totalResources(a: Audit): number {
+  return Object.values(a.resource_counts || {}).reduce((s, n) => s + n, 0)
+}
+
+export default function DashboardPage() {
+  const { user } = useAuth()
+  const router   = useRouter()
+  const [audits, setAudits]       = useState<Audit[] | null>(null)
+  const [subs, setSubs]           = useState<Subscription[] | null>(null)
+  const [error, setError]         = useState('')
+  const [loading, setLoading]     = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const auditList = await api.listAudits()
+      setAudits(auditList)
+      if (user?.role === 'admin') {
+        try { setSubs(await api.listSubscriptions()) } catch { setSubs(null) }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load dashboard data')
+    } finally {
+      setLoading(false)
+    }
+  }, [user?.role])
+
+  useEffect(() => { load() }, [load])
+
+  const latest = audits?.find(a => a.status === 'completed') || null
+  const recent = audits?.slice(0, 5) || []
+
+  const now = new Date()
+  const auditsThisMonth = audits?.filter(a => {
+    const d = new Date(a.created_at)
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+  }).length ?? 0
+
+  const activeSubs = subs?.filter(s => s.is_active).length ?? null
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+    <>
+      <Header title="Dashboard" />
+      <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+        {loading && (
+          <>
+            <KPISkeletonRow />
+            <ChartSkeleton />
+            <TableSkeleton rows={5} cols={7} />
+          </>
+        )}
+
+        {!loading && error && (
+          <div className="glass" style={{ padding: '2rem', textAlign: 'center' }}>
+            <p style={{ color: '#ef4444', fontSize: '0.875rem', marginBottom: '1rem' }}>{error}</p>
+            <button className="btn-ghost" onClick={load}>Retry</button>
+          </div>
+        )}
+
+        {!loading && !error && (
+          <>
+            {latest ? (
+              <>
+                {/* KPI tiles */}
+                <div className="stagger grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <KPICard
+                    label="Total Resources"
+                    value={totalResources(latest)}
+                    sub="from latest audit"
+                    accent="cyan"
+                  />
+                  <KPICard
+                    label="Last Audit"
+                    value={new Date(latest.created_at).toLocaleDateString()}
+                    sub={`${new Date(latest.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${latest.subscription_name || shortId(latest.subscription_id)}`}
+                    accent="emerald"
+                  />
+                  <KPICard
+                    label="Subscriptions"
+                    value={activeSubs !== null ? activeSubs : '—'}
+                    sub={subs ? `${subs.length} total, ${activeSubs} active` : 'admin only'}
+                    accent="violet"
+                  />
+                  <KPICard
+                    label="Audits This Month"
+                    value={auditsThisMonth}
+                    trend="↑ daily"
+                    trendDir="up"
+                    sub="scheduled at 1:30 PM (SL time)"
+                    accent="amber"
+                  />
+                </div>
+
+                {/* Charts — trends + resource breakdown */}
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                  <TrendChart audits={audits || []} />
+                  <div className="glass animate-fade-in" style={{ padding: '1.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                      <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Resource Breakdown</h2>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--t3)', fontFamily: 'ui-monospace, monospace' }}>
+                        audit {shortId(latest.id)}
+                      </span>
+                    </div>
+                    <ResourceChart counts={latest.resource_counts || {}} />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="glass" style={{ padding: '3rem 2rem', textAlign: 'center' }}>
+                <p style={{ color: 'var(--t2)', fontSize: '0.9rem', marginBottom: '0.375rem' }}>
+                  No completed audits yet
+                </p>
+                <p style={{ color: 'var(--t3)', fontSize: '0.8rem' }}>
+                  Audits will appear here once the first scheduled run finishes (daily at 1:30 PM Sri Lanka time).
+                </p>
+              </div>
+            )}
+
+            {/* Top issues digest */}
+            <TopIssues />
+
+            {/* Recent audits */}
+            <div className="glass animate-fade-in" style={{ padding: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Recent Audits</h2>
+                <Link href="/audits" style={{
+                  fontSize: '0.8rem', color: 'var(--acc)', textDecoration: 'none',
+                  display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                }}>
+                  View all <ArrowRight size={13} />
+                </Link>
+              </div>
+
+              {recent.length === 0 ? (
+                <p style={{ color: 'var(--t3)', fontSize: '0.8rem', padding: '1rem 0' }}>No audits yet.</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                        {['Audit ID', 'Date & Time', 'Trigger', 'Status', 'Resources', 'Analysis', ''].map(h => (
+                          <th key={h} style={{
+                            textAlign: 'left', padding: '0.5rem 0.75rem',
+                            fontSize: '0.66rem', fontWeight: 600, letterSpacing: '0.06em',
+                            textTransform: 'uppercase', color: 'var(--t3)',
+                          }}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recent.map(a => {
+                        const sc = statusConfig[a.status]  || { label: a.status, color: 'muted' }
+                        const tc = triggerConfig[a.trigger_type] || { label: a.trigger_type, color: 'muted' }
+                        return (
+                          <tr
+                            key={a.id}
+                            className="row-hover"
+                            style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                            onClick={() => router.push(`/audits/${a.id}`)}
+                          >
+                            <td style={{ padding: '0.625rem 0.75rem', fontFamily: 'ui-monospace, monospace', color: 'var(--acc)' }}>
+                              {shortId(a.id)}
+                            </td>
+                            <td style={{ padding: '0.625rem 0.75rem', color: 'var(--t2)' }}>
+                              {new Date(a.created_at).toLocaleString()}
+                            </td>
+                            <td style={{ padding: '0.625rem 0.75rem' }}>
+                              <Badge color={tc.color} label={tc.label} />
+                            </td>
+                            <td style={{ padding: '0.625rem 0.75rem' }}>
+                              <Badge color={sc.color} label={sc.label} />
+                            </td>
+                            <td style={{ padding: '0.625rem 0.75rem', color: 'var(--t2)' }}>
+                              {a.status === 'failed' ? '—' : formatNumber(totalResources(a))}
+                            </td>
+                            <td style={{ padding: '0.625rem 0.75rem' }}>
+                              {a.has_analysis ? (
+                                <span style={{ color: '#22c55e', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                                  <Check size={13} /> Cached
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--t4)', fontSize: '0.78rem' }}>Not yet</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '0.625rem 0.75rem', textAlign: 'right' }}>
+                              <span style={{ color: 'var(--acc)', fontSize: '0.78rem' }}>View</span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  )
 }

@@ -1,5 +1,27 @@
 import { findMessagesByAudit, insertMessage, findMessageById, updateMessage, deleteMessage } from '../models/chat'
 import { JWTPayload } from '../types'
+import { runChat } from '../utils/claude'
+
+export async function askChatController(auditId: string, content: string, auth: JWTPayload) {
+  if (!content || typeof content !== 'string') {
+    return { error: 'content required', status: 400 }
+  }
+
+  const history = await findMessagesByAudit(auditId)
+  await insertMessage(auditId, auth.user_id, 'user', content)
+
+  try {
+    const result = await runChat(auditId, content, history)
+    if (result.error || !result.reply) {
+      return { error: result.error || 'chat failed', status: result.status }
+    }
+    await insertMessage(auditId, auth.user_id, 'assistant', result.reply)
+    return { data: { reply: result.reply }, status: 200 }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'chat failed'
+    return { error: message, status: 500 }
+  }
+}
 
 export async function listChatController(auditId: string) {
   const messages = await findMessagesByAudit(auditId)

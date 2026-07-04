@@ -1,5 +1,10 @@
-import { findFindingsByAudit, insertFinding, findFindingById, updateFinding, deleteFinding } from '../models/findings'
+import { findFindingsByAudit, insertFinding, findFindingById, updateFinding, deleteFinding, findTopFindings } from '../models/findings'
 import { Finding } from '../types'
+
+export async function topFindingsController(limit = 8) {
+  const findings = await findTopFindings(limit)
+  return { data: findings, status: 200 }
+}
 
 export async function listFindingsController(auditId: string) {
   const findings = await findFindingsByAudit(auditId)

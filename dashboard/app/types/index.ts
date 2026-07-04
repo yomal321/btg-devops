@@ -1,16 +1,23 @@
+export type Role = 'admin' | 'analyst' | 'viewer'
+
+export interface SessionUser {
+  id: string
+  email: string
+  role: Role
+}
+
 export interface User {
   id: string
   email: string
-  password_hash: string
-  role: string
+  role: Role
   is_active: boolean
-  created_at: Date
-  last_login: Date | null
+  created_at: string
+  last_login: string | null
 }
 
 export interface Audit {
   id: string
-  created_at: Date
+  created_at: string
   subscription_id: string
   subscription_name: string
   trigger_type: string
@@ -25,13 +32,6 @@ export interface AuditDetail extends Audit {
   claude_analysis: Record<string, unknown> | null
 }
 
-export interface Resource {
-  id: number
-  slug: string
-  name: string
-  description: string
-}
-
 export interface Finding {
   id: string
   audit_id: string
@@ -40,7 +40,7 @@ export interface Finding {
   resource_name: string
   issue: string
   recommendation: string
-  created_at: Date
+  created_at: string
 }
 
 export interface ChatMessage {
@@ -49,52 +49,7 @@ export interface ChatMessage {
   user_id: string
   role: 'user' | 'assistant'
   content: string
-  created_at: Date
-}
-
-export interface JWTPayload {
-  user_id: string
-  email: string
-  role: string
-}
-
-export interface CostRow {
-  Cost: number
-  Currency: string
-  UsageDate: number // YYYYMMDD
-  ResourceId: string
-  ServiceName: string
-}
-
-export interface CostDataRaw {
-  total_rows: number
-  period_from: string
-  period_to: string
-  actual_cost_rows: CostRow[]
-  amortized_cost_rows: CostRow[]
-}
-
-export interface UsageDataPoint {
-  timestamp: string
-  average?: number
-  total?: number
-  count?: number
-  minimum?: number
-  maximum?: number
-}
-
-export interface UsageMetricRaw {
-  resource_id: string
-  metric_name: string
-  unit: string
-  data_points: UsageDataPoint[]
-}
-
-export interface UsageDataRaw {
-  total_resources_sampled: number
-  period_from: string
-  period_to: string
-  metrics: UsageMetricRaw[]
+  created_at: string
 }
 
 export interface CostUsageSummary {
@@ -119,6 +74,6 @@ export interface Subscription {
   tenant_id: string
   client_id: string
   is_active: boolean
-  created_at: Date
-  last_audit_at: Date | null
+  created_at: string
+  last_audit_at: string | null
 }

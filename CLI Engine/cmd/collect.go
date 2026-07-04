@@ -147,6 +147,14 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		{"resourcegroup", func() (any, error) { return extractors.ExtractResourceGroup(ctx, subID, cred) }},
 	}
 
+	// Cost and Usage are collected separately from resourceCounts below —
+	// they're billing/metric data, not resource inventory counts, so they
+	// don't get a tile on the dashboard's per-audit resource-count grid.
+	costUsageExtractors := []extractor{
+		{"cost", func() (any, error) { return extractors.ExtractCost(ctx, subID, cred) }},
+		{"usage", func() (any, error) { return extractors.ExtractUsage(ctx, subID, cred) }},
+	}
+
 	rawData := map[string]any{
 		"collected_at":    time.Now().UTC().Format(time.RFC3339),
 		"subscription_id": subID,
@@ -167,6 +175,18 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		}
 		rawData[e.key] = data
 		resourceCounts[e.key] = countResources(data)
+	}
+
+	for i, e := range costUsageExtractors {
+		fmt.Fprintf(os.Stderr, "[%d/%d] Extracting %s...\n", i+1, len(costUsageExtractors), e.key)
+		data, err := e.run()
+		if err != nil {
+			extractErrors = append(extractErrors, fmt.Sprintf("%s: %v", e.key, err))
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+			rawData[e.key] = nil
+			continue
+		}
+		rawData[e.key] = data
 	}
 
 	// --- Serialize and save ---

@@ -1,0 +1,348 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert } from 'lucide-react'
+import { Badge } from './Badge'
+import { Modal } from './Modal'
+import { api } from '../lib/api'
+import { useAuth } from '../lib/auth'
+import { severityConfig } from '../lib/utils'
+
+interface AnalysisFinding {
+  severity: 'Critical' | 'Warning' | 'Info'
+  category: string
+  resource_type: string
+  resource_name: string
+  issue: string
+  recommendation: string
+}
+
+export interface Analysis {
+  summary: string
+  findings: AnalysisFinding[]
+  generated_at: string
+  model: string
+}
+
+export interface AnalysisStore {
+  all?: Analysis
+  by_resource?: Record<string, Analysis>
+}
+
+const ALL_SCOPE = 'all'
+
+// Cost/Usage aren't resource types (no count in resourceCounts) — they're
+// billing/metric data attached to the audit separately. Labeled distinctly
+// in the scope dropdown rather than shown as "N resources".
+const EXTRA_SCOPE_LABELS: Record<string, string> = {
+  cost: 'Cost Management data',
+  usage: 'Azure Monitor usage data',
+}
+
+function normalizeStore(raw: unknown): AnalysisStore {
+  if (!raw || typeof raw !== 'object') return {}
+  const obj = raw as Record<string, unknown>
+  if ('all' in obj || 'by_resource' in obj) return obj as AnalysisStore
+  if ('findings' in obj) return { all: obj as unknown as Analysis } // legacy flat shape
+  return {}
+}
+
+const severityIcons = {
+  Critical: <AlertCircle size={15} color="#ef4444" />,
+  Warning:  <AlertTriangle size={15} color="#fbbf24" />,
+  Info:     <Info size={15} color="#60a5fa" />,
+}
+
+const severityTint = {
+  Critical: { bg: 'rgba(239,68,68,0.08)',  border: 'rgba(239,68,68,0.35)',  color: '#ef4444' },
+  Warning:  { bg: 'rgba(251,191,36,0.08)', border: 'rgba(251,191,36,0.35)', color: '#fbbf24' },
+  Info:     { bg: 'rgba(96,165,250,0.08)', border: 'rgba(96,165,250,0.35)', color: '#60a5fa' },
+}
+
+interface AnalysisPanelProps {
+  auditId: string
+  resourceCounts: Record<string, number>
+  initialStore: unknown
+  /** Non-resource-count scopes available for this audit, e.g. ['cost', 'usage']. */
+  extraScopes?: string[]
+}
+
+export function AnalysisPanel({ auditId, resourceCounts, initialStore, extraScopes = [] }: AnalysisPanelProps) {
+  const { user } = useAuth()
+  const canAnalyze = user?.role === 'admin' || user?.role === 'analyst'
+
+  const resourceTypes = useMemo(() => Object.keys(resourceCounts || {}).sort(), [resourceCounts])
+
+  const [store, setStore] = useState<AnalysisStore>(() => normalizeStore(initialStore))
+  const [scope, setScope] = useState<string>(resourceTypes[0] || extraScopes[0] || ALL_SCOPE)
+  const [running, setRunning]   = useState(false)
+  const [error, setError]       = useState('')
+  const [showAllConfirm, setShowAllConfirm] = useState(false)
+  const [sevFilter, setSevFilter]   = useState<string>('all')
+  const [typeFilter, setTypeFilter] = useState<string>('all')
+
+  const currentAnalysis = scope === ALL_SCOPE ? store.all : store.by_resource?.[scope]
+
+  async function analyzeScope(slug: string) {
+    setRunning(true)
+    setError('')
+    try {
+      const result = await api.analyzeAudit(auditId, slug === ALL_SCOPE ? undefined : slug)
+      const analysis = result.analysis as unknown as Analysis
+      setStore(s =>
+        slug === ALL_SCOPE
+          ? { ...s, all: analysis }
+          : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Analysis failed')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  function handleAnalyzeClick() {
+    if (scope === ALL_SCOPE) setShowAllConfirm(true)
+    else analyzeScope(scope)
+  }
+
+  const findings = useMemo(() => currentAnalysis?.findings || [], [currentAnalysis])
+  const counts = {
+    Critical: findings.filter(f => f.severity === 'Critical').length,
+    Warning:  findings.filter(f => f.severity === 'Warning').length,
+    Info:     findings.filter(f => f.severity === 'Info').length,
+  }
+  const findingResourceTypes = useMemo(
+    () => Array.from(new Set(findings.map(f => f.resource_type).filter(Boolean))).sort(),
+    [findings]
+  )
+  const filtered = findings.filter(f =>
+    (sevFilter === 'all' || f.severity === sevFilter) &&
+    (typeFilter === 'all' || f.resource_type === typeFilter)
+  )
+  const hasActiveFilter = sevFilter !== 'all' || typeFilter !== 'all'
+
+  const selectStyle: React.CSSProperties = {
+    background: 'var(--panel)', border: '1px solid var(--border-strong)',
+    borderRadius: 8, color: 'var(--t1)', padding: '0.4rem 0.625rem', fontSize: '0.78rem',
+    cursor: 'pointer', maxWidth: '100%',
+  }
+
+  return (
+    <div className="glass" style={{ padding: '1.25rem' }}>
+      {/* header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.875rem', flexWrap: 'wrap' }}>
+        <Sparkles size={16} color="var(--acc)" />
+        <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)', flex: 1 }}>AI Analysis</h2>
+        {currentAnalysis && (
+          <Badge color="success" label={`Cached · ${scope === ALL_SCOPE ? 'All Resources' : EXTRA_SCOPE_LABELS[scope] || scope} · ${new Date(currentAnalysis.generated_at).toLocaleDateString()}`} />
+        )}
+      </div>
+
+      {/* scope selector — always visible so viewers can browse cached results too */}
+      {(resourceTypes.length > 0 || extraScopes.length > 0) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: '0.78rem', color: 'var(--t3)' }}>Analyze:</label>
+          <select
+            style={selectStyle}
+            value={scope}
+            onChange={e => setScope(e.target.value)}
+            disabled={running}
+          >
+            {resourceTypes.length > 0 && (
+              <optgroup label="Resource types">
+                {resourceTypes.map(t => (
+                  <option key={t} value={t}>{t} ({resourceCounts[t]} resources)</option>
+                ))}
+              </optgroup>
+            )}
+            {extraScopes.length > 0 && (
+              <optgroup label="Cost & Usage">
+                {extraScopes.map(s => (
+                  <option key={s} value={s}>{EXTRA_SCOPE_LABELS[s] || s}</option>
+                ))}
+              </optgroup>
+            )}
+            {resourceTypes.length > 0 && (
+              <option value={ALL_SCOPE}>— All Resources (all {resourceTypes.length} types) —</option>
+            )}
+          </select>
+        </div>
+      )}
+
+      {/* state: viewer locked, no analysis for this scope */}
+      {!currentAnalysis && !canAnalyze && (
+        <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--t3)' }}>
+          <Lock size={22} style={{ margin: '0 auto 0.75rem', display: 'block' }} />
+          <p style={{ fontSize: '0.85rem' }}>Analysis has not been run yet for this selection.</p>
+          <p style={{ fontSize: '0.78rem', marginTop: '0.25rem' }}>Ask an analyst or admin to run it.</p>
+        </div>
+      )}
+
+      {/* state: can run, not yet run for this scope */}
+      {!currentAnalysis && canAnalyze && !running && (
+        <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
+          <p style={{ fontSize: '0.85rem', color: 'var(--t2)', marginBottom: '1rem' }}>
+            {scope === ALL_SCOPE
+              ? 'Send the full audit (all resource types) to Claude in one request.'
+              : extraScopes.includes(scope)
+              ? `Send the ${EXTRA_SCOPE_LABELS[scope] || scope} to Claude for a focused analysis.`
+              : `Send only the "${scope}" resources to Claude for a focused, fast analysis.`}
+          </p>
+          {error && <p style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '0.75rem' }}>{error}</p>}
+          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze with Claude</button>
+        </div>
+      )}
+
+      {/* state: running */}
+      {running && (
+        <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
+          <div style={{
+            width: 26, height: 26, margin: '0 auto 0.875rem',
+            border: '2px solid var(--border-strong)', borderTopColor: 'var(--acc)',
+            borderRadius: '50%', animation: 'spin 0.8s linear infinite',
+          }} />
+          <p style={{ fontSize: '0.82rem', color: 'var(--t2)' }}>
+            {scope === ALL_SCOPE ? 'Sending the full audit for analysis…' : `Analyzing ${EXTRA_SCOPE_LABELS[scope] || scope}…`}
+          </p>
+          <p style={{ fontSize: '0.72rem', color: 'var(--t4)', marginTop: '0.25rem' }}>
+            {scope === ALL_SCOPE ? 'This can take a minute or more.' : 'This should only take a few seconds.'}
+          </p>
+        </div>
+      )}
+
+      {/* state: results */}
+      {currentAnalysis && !running && (
+        <div className="animate-fade-in">
+          {currentAnalysis.summary && (
+            <p style={{ fontSize: '0.83rem', color: 'var(--t2)', lineHeight: 1.6, marginBottom: '1rem' }}>
+              {currentAnalysis.summary}
+            </p>
+          )}
+
+          {/* severity tiles */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.625rem', marginBottom: '1rem' }}>
+            {(['Critical', 'Warning', 'Info'] as const).map(sev => {
+              const t = severityTint[sev]
+              const active = sevFilter === sev
+              return (
+                <button
+                  key={sev}
+                  onClick={() => setSevFilter(active ? 'all' : sev)}
+                  style={{
+                    background: t.bg,
+                    border: `1px solid ${active ? t.color : t.border}`,
+                    borderRadius: 8, padding: '0.75rem', cursor: 'pointer', textAlign: 'center',
+                    outline: active ? `1px solid ${t.color}` : 'none',
+                  }}
+                >
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: t.color, fontFamily: 'ui-monospace, monospace' }}>
+                    {counts[sev]}
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {sev}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* filter bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.875rem', flexWrap: 'wrap' }}>
+            <select style={selectStyle} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+              <option value="all">All resource types</option>
+              {findingResourceTypes.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select style={selectStyle} value={sevFilter} onChange={e => setSevFilter(e.target.value)}>
+              <option value="all">All priorities</option>
+              <option value="Critical">Critical</option>
+              <option value="Warning">Warning</option>
+              <option value="Info">Info</option>
+            </select>
+            {hasActiveFilter && (
+              <button
+                onClick={() => { setSevFilter('all'); setTypeFilter('all') }}
+                style={{ background: 'none', border: 'none', color: 'var(--acc)', fontSize: '0.78rem', cursor: 'pointer' }}
+              >
+                Clear filters
+              </button>
+            )}
+            <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--t3)' }}>
+              {filtered.length} of {findings.length} findings
+            </span>
+          </div>
+
+          {/* findings cards */}
+          {filtered.length === 0 ? (
+            <p style={{ textAlign: 'center', color: 'var(--t3)', fontSize: '0.82rem', padding: '1.5rem 0' }}>
+              No findings match the selected filters.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {filtered.map((f, i) => {
+                const sc = severityConfig[f.severity] || { label: f.severity, color: 'muted' }
+                return (
+                  <div key={i} style={{
+                    border: '1px solid var(--border)', borderRadius: 8, padding: '0.875rem 1rem',
+                    background: 'var(--input-bg)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                      {severityIcons[f.severity]}
+                      <Badge color={sc.color} label={sc.label} />
+                      {f.category && <Badge color="muted" label={f.category} />}
+                      <span style={{
+                        marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--t4)',
+                        fontFamily: 'ui-monospace, monospace',
+                      }}>
+                        {f.resource_type}{f.resource_name ? ` · ${f.resource_name}` : ''}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--t1)', lineHeight: 1.55 }}>{f.issue}</p>
+                    {f.recommendation && (
+                      <div style={{
+                        marginTop: '0.625rem', padding: '0.55rem 0.75rem', borderRadius: 6,
+                        background: 'rgba(34,197,94,0.07)', border: '1px solid rgba(34,197,94,0.2)',
+                        fontSize: '0.78rem', color: 'var(--t2)', lineHeight: 1.5,
+                      }}>
+                        <span style={{ color: '#22c55e', fontWeight: 600 }}>Fix: </span>
+                        {f.recommendation}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* "Analyze All" confirmation dialog */}
+      {showAllConfirm && (
+        <Modal title="Analyze All Resources?" onClose={() => setShowAllConfirm(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{
+              display: 'flex', gap: '0.625rem', padding: '0.75rem 0.875rem',
+              background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 8,
+            }}>
+              <TriangleAlert size={17} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
+              <p style={{ fontSize: '0.82rem', color: 'var(--t2)', lineHeight: 1.55 }}>
+                This sends the complete audit dataset — all {resourceTypes.length} resource types — to Claude in a single request.
+                It is slower and uses significantly more tokens than analyzing one resource type at a time.
+              </p>
+            </div>
+            {error && <p style={{ color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>}
+            <div style={{ display: 'flex', gap: '0.625rem', justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={() => setShowAllConfirm(false)}>Cancel</button>
+              <button
+                className="btn-primary"
+                onClick={() => { setShowAllConfirm(false); analyzeScope(ALL_SCOPE) }}
+              >
+                Yes, Analyze All
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
