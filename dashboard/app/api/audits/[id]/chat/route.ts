@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, requireRole } from '../../../middleware/auth'
-import { listChatController, saveChatController } from '../../../controllers/chat'
+import { listChatController, saveChatController, askChatController } from '../../../controllers/chat'
 import { unauthorized, forbidden } from '../../../utils/response'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -19,7 +19,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params
   const body = await req.json()
-  const result = await saveChatController(id, body, auth)
+  // {content} alone → ask Claude (Method 2); {role, content} → raw save (internal use)
+  const result = body.role
+    ? await saveChatController(id, body, auth)
+    : await askChatController(id, body.content, auth)
   if (result.error) return NextResponse.json({ error: result.error }, { status: result.status })
   return NextResponse.json(result.data, { status: result.status })
 }

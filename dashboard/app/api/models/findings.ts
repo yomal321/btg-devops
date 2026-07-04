@@ -23,6 +23,17 @@ export async function insertFinding(
   return rows[0].id
 }
 
+export async function findTopFindings(limit: number): Promise<Finding[]> {
+  const { rows } = await pool.query(
+    `SELECT id, audit_id, severity, resource_type, resource_name, issue, recommendation, created_at
+     FROM findings
+     ORDER BY CASE severity WHEN 'Critical' THEN 1 WHEN 'Warning' THEN 2 ELSE 3 END, created_at DESC
+     LIMIT $1`,
+    [limit]
+  )
+  return rows
+}
+
 export async function findFindingById(findingId: number): Promise<Finding | null> {
   const { rows } = await pool.query(
     `SELECT id, audit_id, severity, resource_type, resource_name, issue, recommendation, created_at

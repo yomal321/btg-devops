@@ -39,12 +39,19 @@ export async function getUserController(userId: string) {
 
 export async function updateUserController(
   userId: string,
-  body: { role?: string; is_active?: boolean }
+  body: { role?: string; is_active?: boolean },
+  auth?: JWTPayload
 ) {
   const { role, is_active } = body
 
   if (role && !['admin', 'analyst', 'viewer'].includes(role)) {
     return { error: 'role must be admin, analyst, or viewer', status: 400 }
+  }
+  if (auth && auth.user_id === userId && role && role !== 'admin') {
+    return { error: 'cannot demote your own account', status: 400 }
+  }
+  if (auth && auth.user_id === userId && is_active === false) {
+    return { error: 'cannot deactivate your own account', status: 400 }
   }
 
   await patchUser(userId, role, is_active)

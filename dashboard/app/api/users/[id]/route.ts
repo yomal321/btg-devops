@@ -21,7 +21,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params
   const body = await req.json()
-  const result = await updateUserController(id, body)
+  const result = await updateUserController(id, body, auth)
   if (result.error) return NextResponse.json({ error: result.error }, { status: result.status })
   return NextResponse.json(result.data)
 }

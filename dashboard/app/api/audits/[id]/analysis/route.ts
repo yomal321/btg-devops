@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, requireRole } from '../../../middleware/auth'
-import { saveAnalysisController, getAnalysisController, deleteAnalysisController } from '../../../controllers/audit'
+import { runAnalysisController, getAnalysisController, deleteAnalysisController } from '../../../controllers/audit'
 import { unauthorized, forbidden } from '../../../utils/response'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -19,8 +19,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!requireRole(auth, ['admin', 'analyst'])) return forbidden()
 
   const { id } = await params
-  const body = await req.json()
-  const result = await saveAnalysisController(id, body)
+  const resource = req.nextUrl.searchParams.get('resource') || undefined
+  const result = await runAnalysisController(id, resource)
+  if (result.error) return NextResponse.json({ error: result.error }, { status: result.status })
   return NextResponse.json(result.data)
 }
 

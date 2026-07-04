@@ -1,5 +1,11 @@
 import pool from './client'
-import { Audit, AuditDetail } from '../types'
+import { Audit, AuditDetail, CostDataRaw, UsageDataRaw } from '../types'
+
+export interface AuditCostUsageRaw {
+  cost: CostDataRaw | null
+  usage: UsageDataRaw | null
+  claude_analysis: Record<string, unknown> | null
+}
 
 export async function findAllAudits(): Promise<Audit[]> {
   const { rows } = await pool.query(
@@ -24,6 +30,20 @@ export async function findAuditById(auditId: string): Promise<AuditDetail | null
             claude_analysis IS NOT NULL AS has_analysis,
             COALESCE(raw_data, '{}'::jsonb) AS raw_data,
             claude_analysis
+     FROM audits WHERE id = $1`,
+    [auditId]
+  )
+  return rows[0] || null
+}
+
+// findAuditCostUsageRaw pulls ONLY the cost/usage/claude_analysis keys out of
+// raw_data — not the whole audit row — so the Cost & Usage page's summary
+// endpoint never has to transfer the other 12 resource types' data (or the
+// full, potentially many-thousand-row cost dataset) just to compute a few
+// aggregated numbers.
+export async function findAuditCostUsageRaw(auditId: string): Promise<AuditCostUsageRaw | null> {
+  const { rows } = await pool.query(
+    `SELECT raw_data->'cost' AS cost, raw_data->'usage' AS usage, claude_analysis
      FROM audits WHERE id = $1`,
     [auditId]
   )
