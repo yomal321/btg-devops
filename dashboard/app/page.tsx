@@ -3,14 +3,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowRight, Check } from 'lucide-react'
+import { ArrowRight, Check, Boxes, CalendarClock, Globe2, TrendingUp, LayoutGrid, Activity, MapPinned, History } from 'lucide-react'
 import { Header } from './components/Header'
 import { KPICard } from './components/KPICard'
+import { SectionHeader } from './components/SectionHeader'
 import { ResourceChart } from './components/ResourceChart'
 import { Badge } from './components/Badge'
 import { KPISkeletonRow, ChartSkeleton, TableSkeleton } from './components/Skeleton'
 import { TrendChart } from './components/TrendChart'
 import { TopIssues } from './components/TopIssues'
+import { RegionSection } from './components/RegionSection'
 import { api } from './lib/api'
 import { useAuth } from './lib/auth'
 import { formatNumber, shortId, statusConfig, triggerConfig } from './lib/utils'
@@ -57,10 +59,77 @@ export default function DashboardPage() {
 
   const activeSubs = subs?.filter(s => s.is_active).length ?? null
 
+  // Last 10 completed audits, oldest→newest, for the Total Resources sparkline.
+  const resourceSparkline = (audits || [])
+    .filter(a => a.status === 'completed')
+    .slice(0, 10)
+    .reverse()
+    .map(totalResources)
+
+  const hour = now.getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+  const firstName = user?.email ? user.email.split('@')[0] : ''
+
   return (
     <>
       <Header title="Dashboard" />
-      <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+      <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+        {/* Hero / welcome banner */}
+        <div
+          className="animate-fade-in"
+          style={{
+            position: 'relative', overflow: 'hidden', borderRadius: 'var(--radius)',
+            padding: '2rem 1.75rem', border: '1px solid var(--border-strong)',
+            background: 'linear-gradient(135deg, #1a2340 0%, #171d33 40%, var(--card) 100%)',
+            boxShadow: 'var(--shadow-card)',
+          }}
+        >
+          {/* layered color-mesh blobs — the "aurora" backdrop */}
+          <div style={{
+            position: 'absolute', top: '-45%', right: '-6%', width: 320, height: 320, borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(96,165,250,0.35) 0%, transparent 70%)', pointerEvents: 'none', filter: 'blur(2px)',
+          }} />
+          <div style={{
+            position: 'absolute', bottom: '-55%', left: '18%', width: 280, height: 280, borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(168,133,233,0.28) 0%, transparent 70%)', pointerEvents: 'none',
+          }} />
+          <div style={{
+            position: 'absolute', top: '-20%', left: '55%', width: 200, height: 200, borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(25,158,112,0.22) 0%, transparent 70%)', pointerEvents: 'none',
+          }} />
+          <p style={{ fontSize: '1.3rem', fontWeight: 800, color: '#f8fafc', position: 'relative', letterSpacing: '-0.01em' }}>
+            {greeting}{firstName ? `, ${firstName}` : ''}
+          </p>
+          <p style={{ fontSize: '0.82rem', color: 'rgba(226,232,240,0.65)', marginTop: '0.375rem', position: 'relative' }}>
+            {now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            {latest && ` · Latest audit ${shortId(latest.id)} completed ${new Date(latest.created_at).toLocaleDateString()}`}
+          </p>
+          {latest && (
+            <div style={{ display: 'flex', gap: '1.75rem', marginTop: '1.25rem', position: 'relative', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#f8fafc', fontFamily: 'ui-monospace, monospace' }}>
+                  {formatNumber(totalResources(latest))}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'rgba(226,232,240,0.5)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>resources tracked</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#f8fafc', fontFamily: 'ui-monospace, monospace' }}>
+                  {auditsThisMonth}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'rgba(226,232,240,0.5)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>audits this month</div>
+              </div>
+              {activeSubs !== null && (
+                <div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#f8fafc', fontFamily: 'ui-monospace, monospace' }}>
+                    {activeSubs}
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: 'rgba(226,232,240,0.5)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>active subscriptions</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {loading && (
           <>
@@ -81,48 +150,65 @@ export default function DashboardPage() {
           <>
             {latest ? (
               <>
-                {/* KPI tiles */}
-                <div className="stagger grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <KPICard
-                    label="Total Resources"
-                    value={totalResources(latest)}
-                    sub="from latest audit"
-                    accent="cyan"
-                  />
-                  <KPICard
-                    label="Last Audit"
-                    value={new Date(latest.created_at).toLocaleDateString()}
-                    sub={`${new Date(latest.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${latest.subscription_name || shortId(latest.subscription_id)}`}
-                    accent="emerald"
-                  />
-                  <KPICard
-                    label="Subscriptions"
-                    value={activeSubs !== null ? activeSubs : '—'}
-                    sub={subs ? `${subs.length} total, ${activeSubs} active` : 'admin only'}
-                    accent="violet"
-                  />
-                  <KPICard
-                    label="Audits This Month"
-                    value={auditsThisMonth}
-                    trend="↑ daily"
-                    trendDir="up"
-                    sub="scheduled at 1:30 PM (SL time)"
-                    accent="amber"
-                  />
+                {/* Overview */}
+                <div>
+                  <SectionHeader icon={LayoutGrid} title="Overview" caption="Key numbers from your latest audit" />
+                  <div className="stagger grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <KPICard
+                      icon={Boxes}
+                      label="Total Resources"
+                      value={totalResources(latest)}
+                      sub="from latest audit"
+                      accent="cyan"
+                      sparkline={resourceSparkline}
+                    />
+                    <KPICard
+                      icon={CalendarClock}
+                      label="Last Audit"
+                      value={new Date(latest.created_at).toLocaleDateString()}
+                      sub={`${new Date(latest.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${latest.subscription_name || shortId(latest.subscription_id)}`}
+                      accent="emerald"
+                    />
+                    <KPICard
+                      icon={Globe2}
+                      label="Subscriptions"
+                      value={activeSubs !== null ? activeSubs : '—'}
+                      sub={subs ? `${subs.length} total, ${activeSubs} active` : 'admin only'}
+                      accent="violet"
+                    />
+                    <KPICard
+                      icon={TrendingUp}
+                      label="Audits This Month"
+                      value={auditsThisMonth}
+                      trend="↑ daily"
+                      trendDir="up"
+                      sub="scheduled at 1:30 PM (SL time)"
+                      accent="amber"
+                    />
+                  </div>
                 </div>
 
-                {/* Charts — trends + resource breakdown */}
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-                  <TrendChart audits={audits || []} />
-                  <div className="glass animate-fade-in" style={{ padding: '1.25rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                      <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Resource Breakdown</h2>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--t3)', fontFamily: 'ui-monospace, monospace' }}>
-                        audit {shortId(latest.id)}
-                      </span>
+                {/* Performance — trends + resource breakdown */}
+                <div>
+                  <SectionHeader icon={Activity} title="Performance" caption="How your resource footprint is trending" />
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                    <TrendChart audits={audits || []} />
+                    <div className="glass animate-fade-in" style={{ padding: '1.125rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                        <h3 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--t1)' }}>Resource Breakdown</h3>
+                        <span style={{ fontSize: '0.68rem', color: 'var(--t3)', fontFamily: 'ui-monospace, monospace' }}>
+                          audit {shortId(latest.id)}
+                        </span>
+                      </div>
+                      <ResourceChart counts={latest.resource_counts || {}} />
                     </div>
-                    <ResourceChart counts={latest.resource_counts || {}} />
                   </div>
+                </div>
+
+                {/* Regional Insights — distribution + cross-region compute/data check */}
+                <div>
+                  <SectionHeader icon={MapPinned} title="Regional Insights" caption="Where resources live, and where compute is isolated from data" />
+                  <RegionSection auditId={latest.id} />
                 </div>
               </>
             ) : (
@@ -140,16 +226,21 @@ export default function DashboardPage() {
             <TopIssues />
 
             {/* Recent audits */}
-            <div className="glass animate-fade-in" style={{ padding: '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Recent Audits</h2>
-                <Link href="/audits" style={{
-                  fontSize: '0.8rem', color: 'var(--acc)', textDecoration: 'none',
-                  display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                }}>
-                  View all <ArrowRight size={13} />
-                </Link>
-              </div>
+            <div>
+              <SectionHeader
+                icon={History}
+                title="Recent Activity"
+                caption="Latest audit runs across all subscriptions"
+                action={
+                  <Link href="/audits" style={{
+                    fontSize: '0.8rem', color: 'var(--acc)', textDecoration: 'none',
+                    display: 'inline-flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap',
+                  }}>
+                    View all <ArrowRight size={13} />
+                  </Link>
+                }
+              />
+              <div className="glass animate-fade-in" style={{ padding: '1.25rem' }}>
 
               {recent.length === 0 ? (
                 <p style={{ color: 'var(--t3)', fontSize: '0.8rem', padding: '1rem 0' }}>No audits yet.</p>
@@ -214,6 +305,7 @@ export default function DashboardPage() {
                   </table>
                 </div>
               )}
+              </div>
             </div>
           </>
         )}

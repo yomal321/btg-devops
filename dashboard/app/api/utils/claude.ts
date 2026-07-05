@@ -1,5 +1,5 @@
 import { findAuditById, updateClaudeAnalysis, findAnalysisById, findAuditCostUsageRaw, findAuditUsageRaw, findAuditCostRaw } from '../models/audit'
-import { insertFinding, findFindingsByAudit } from '../models/findings'
+import { insertFinding, findFindingsByAudit, deleteFindingsByScope, findPriorLiveFindings, deleteFindingsByIds, resolveFindingsByIds } from '../models/findings'
 import { ChatMessage, Finding } from '../types'
 import { callLLM, LLMProvider, LLMMessage } from './llm'
 import { buildUsageGroups } from './usage'
@@ -105,18 +105,67 @@ Respond with ONLY a JSON object in this exact shape, no other text:
   }
 }
 
-async function saveFindings(auditId: string, findings: AnalysisFinding[]) {
+// Cross-audit identity for a finding. resource_type + resource_name +
+// category is the most stable signal available — the issue TEXT can't be
+// used because the LLM words it slightly differently on every run.
+function findingKey(f: { resource_type?: string | null; resource_name?: string | null; category?: string | null }): string {
+  const norm = (s?: string | null) => (s || '').trim().toLowerCase()
+  return `${norm(f.resource_type)}|${norm(f.resource_name)}|${norm(f.category)}`
+}
+
+// Saves one scope's findings with full lifecycle handling:
+//
+// 1. Replace, don't append: this audit+scope's previous rows are deleted
+//    first, so re-analyzing after a cache clear doesn't duplicate.
+// 2. Age carry-forward: if the same issue (per findingKey) was already open
+//    in an EARLIER audit of this subscription, the new row inherits that
+//    row's first_seen_at — so an unfixed problem shows "7 days old" next
+//    week instead of resetting to "new" on every audit. The superseded
+//    older row is deleted (its audit's cached claude_analysis JSON still
+//    preserves what that audit reported, so no display history is lost).
+// 3. Sticky dismissals: if the matched prior row was dismissed, the new row
+//    stays dismissed — a new audit doesn't resurrect issues someone already
+//    marked "won't fix".
+// 4. Auto-resolve: prior OPEN issues that no longer appear in this fresh
+//    analysis get status='resolved' — the signal that something actually
+//    got fixed. (Dismissed ones are left alone.)
+async function saveFindings(auditId: string, findings: AnalysisFinding[], scope: string) {
+  await deleteFindingsByScope(auditId, scope)
+
+  const prior = await findPriorLiveFindings(auditId, scope)
+  const priorByKey = new Map(prior.map(p => [findingKey(p), p]))
+
   const validSeverities = ['Critical', 'Warning', 'Info']
+  const matchedPriorIds: string[] = []
+  const newKeys = new Set<string>()
+
   for (const f of findings) {
     if (!validSeverities.includes(f.severity)) continue
+    const key = findingKey(f)
+    newKeys.add(key)
+    const match = priorByKey.get(key)
+    if (match) matchedPriorIds.push(match.id)
     await insertFinding(auditId, {
       severity: f.severity,
+      category: f.category || undefined,
       resource_type: f.resource_type || '',
       resource_name: f.resource_name || '',
       issue: f.issue || '',
       recommendation: f.recommendation || '',
+    }, scope, {
+      status: match?.status === 'dismissed' ? 'dismissed' : 'open',
+      firstSeenAt: match ? new Date(match.first_seen_at) : new Date(),
     })
   }
+
+  // Matched older copies are superseded by the rows just inserted.
+  await deleteFindingsByIds(matchedPriorIds)
+
+  // Open issues from earlier audits that no longer appear → fixed.
+  const disappeared = prior
+    .filter(p => p.status === 'open' && !newKeys.has(findingKey(p)))
+    .map(p => p.id)
+  await resolveFindingsByIds(disappeared)
 }
 
 /**
@@ -181,7 +230,7 @@ export async function runAnalysis(
       by_resource: { ...(existing.by_resource || {}), [resourceSlug]: result.analysis },
     }
     await updateClaudeAnalysis(auditId, merged)
-    await saveFindings(auditId, result.analysis.findings)
+    await saveFindings(auditId, result.analysis.findings, resourceSlug)
     return { analysis: result.analysis, status: 200, cached: false }
   }
 
@@ -212,7 +261,7 @@ export async function runAnalysis(
 
   const merged: ClaudeAnalysisStore = { ...existing, all: result.analysis }
   await updateClaudeAnalysis(auditId, merged)
-  await saveFindings(auditId, result.analysis.findings)
+  await saveFindings(auditId, result.analysis.findings, 'all')
   return { analysis: result.analysis, status: 200, cached: false }
 }
 

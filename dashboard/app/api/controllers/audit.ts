@@ -1,9 +1,10 @@
-import { findAllAudits, findAuditById, findAuditResource, findAuditCostRaw, findAuditUsageRaw, updateClaudeAnalysis, insertAudit, updateAudit, deleteAudit, clearClaudeAnalysis, findAnalysisById } from '../models/audit'
+import { findAllAudits, findAuditById, findAuditResource, findAuditRawData, findAuditCostRaw, findAuditUsageRaw, updateClaudeAnalysis, insertAudit, updateAudit, deleteAudit, clearClaudeAnalysis, findAnalysisById } from '../models/audit'
 import { findResourceBySlug } from '../models/resource'
 import { runAnalysis } from '../utils/claude'
 import { LLMProvider } from '../utils/llm'
 import { buildUsageGroups, listUsageTypes } from '../utils/usage'
-import { CostSummary, UsageSummary } from '../types'
+import { computeRegionDistribution, computeCrossRegionMismatches } from '../utils/region'
+import { CostSummary, UsageSummary, RegionSummary } from '../types'
 
 // Coerce an untrusted provider string from the request into a valid provider,
 // or undefined (which makes runAnalysis/runChat fall back to their default).
@@ -75,6 +76,20 @@ export async function getUsageSummaryController(auditId: string, type: string) {
   if (!usage) return { error: 'no usage data for this audit', status: 404 }
 
   const summary: UsageSummary = { type, groups: buildUsageGroups(usage.metrics || [], type) }
+  return { data: summary, status: 200 }
+}
+
+// getRegionSummaryController computes region distribution and cross-region
+// compute/data mismatches from raw_data alone (its own column read — never
+// touches cost_data/usage_data). Deterministic, no LLM call.
+export async function getRegionSummaryController(auditId: string) {
+  const rawData = await findAuditRawData(auditId)
+  if (!rawData) return { error: 'audit not found or has no resource data', status: 404 }
+
+  const summary: RegionSummary = {
+    distribution: computeRegionDistribution(rawData),
+    mismatches: computeCrossRegionMismatches(rawData),
+  }
   return { data: summary, status: 200 }
 }
 

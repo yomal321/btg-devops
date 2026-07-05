@@ -8,7 +8,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!auth) return unauthorized()
 
   const { id } = await params
-  const result = await listFindingsController(id)
+  const scope = req.nextUrl.searchParams.get('scope') || undefined
+  const result = await listFindingsController(id, scope)
   return NextResponse.json(result.data)
 }
 

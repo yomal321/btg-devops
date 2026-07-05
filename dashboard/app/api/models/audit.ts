@@ -43,6 +43,18 @@ export async function findAuditById(auditId: string): Promise<AuditDetail | null
   return rows[0] || null
 }
 
+// findAuditRawData reads only raw_data — used by the region-summary
+// endpoint, which needs the 12-resource-type inventory but not cost_data,
+// usage_data, or claude_analysis (same column-isolation rationale as
+// findAuditCostRaw/findAuditUsageRaw below).
+export async function findAuditRawData(auditId: string): Promise<Record<string, unknown> | null> {
+  const { rows } = await pool.query(
+    `SELECT raw_data FROM audits WHERE id = $1`,
+    [auditId]
+  )
+  return rows[0]?.raw_data || null
+}
+
 // findAuditCostRaw reads cost_data + claude_analysis. cost_data is its own
 // column (not nested in raw_data), so this never touches the 12-resource-type
 // blob at all — fast regardless of how large raw_data has grown.
