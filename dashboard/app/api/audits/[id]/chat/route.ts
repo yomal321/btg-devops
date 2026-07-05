@@ -19,10 +19,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params
   const body = await req.json()
-  // {content} alone → ask Claude (Method 2); {role, content} → raw save (internal use)
+  // {content} alone → ask the model (Method 2); {role, content} → raw save (internal use)
   const result = body.role
     ? await saveChatController(id, body, auth)
-    : await askChatController(id, body.content, auth)
+    : await askChatController(id, body.content, auth, body.provider, body.model, body.scope, body.thread_id)
   if (result.error) return NextResponse.json({ error: result.error }, { status: result.status })
   return NextResponse.json(result.data, { status: result.status })
 }

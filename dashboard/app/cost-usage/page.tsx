@@ -1,30 +1,26 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { DollarSign, Activity, ArrowRight } from 'lucide-react'
+import { DollarSign, ArrowRight } from 'lucide-react'
 import { Header } from '../components/Header'
 import { KPICard } from '../components/KPICard'
 import { AnalysisPanel } from '../components/AnalysisPanel'
-import { ChatPanel } from '../components/ChatPanel'
+import { ChatDock } from '../components/ChatDock'
 import { CostTrendChart, TopServicesChart, formatCurrency } from '../components/CostCharts'
-import { UsageTable } from '../components/UsageTable'
+import { UsageSection } from '../components/UsageSection'
 import { KPISkeletonRow, ChartSkeleton } from '../components/Skeleton'
 import { api } from '../lib/api'
 import { shortId } from '../lib/utils'
-import type { Audit, CostUsageSummary } from '../types'
+import type { Audit, CostSummary } from '../types'
 
 export default function CostUsagePage() {
   const [audit, setAudit]     = useState<Audit | null>(null)
-  const [summary, setSummary] = useState<CostUsageSummary | null>(null)
+  const [summary, setSummary] = useState<CostSummary | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [error, setError]     = useState('')
-  const loaded = useRef(false) // guards against React Strict Mode's dev-only double-invoke
 
   useEffect(() => {
-    if (loaded.current) return
-    loaded.current = true
-
     let cancelled = false
     async function load() {
       try {
@@ -36,7 +32,7 @@ export default function CostUsagePage() {
           if (!cancelled) setNotFound(true)
           return
         }
-        const summaryData = await api.getCostUsageSummary(latest.id)
+        const summaryData = await api.getCostSummary(latest.id)
         if (!cancelled) {
           setAudit(latest)
           setSummary(summaryData)
@@ -85,13 +81,11 @@ export default function CostUsagePage() {
   }
 
   const hasCost = summary.daily_cost.length > 0
-  const hasUsage = summary.usage_by_resource.length > 0
+  const hasUsage = summary.usage_types.length > 0
 
   const totalCost = summary.daily_cost.reduce((s, d) => s + d.cost, 0)
   const daySpan = (new Date(summary.period_to).getTime() - new Date(summary.period_from).getTime()) / 86400000 || 1
   const avgDaily = totalCost / daySpan
-
-  const extraScopes = ['cost', 'usage'].filter(k => (k === 'cost' ? hasCost : hasUsage))
 
   return (
     <>
@@ -163,34 +157,28 @@ export default function CostUsagePage() {
               </div>
             )}
 
-            {/* AI Analysis + Chat — same components, cache, and endpoints as the per-audit page */}
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
-              <div className="lg:col-span-3">
-                <AnalysisPanel
-                  auditId={audit.id}
-                  resourceCounts={{}}
-                  initialStore={summary.claude_analysis}
-                  extraScopes={extraScopes}
-                />
-              </div>
-              <div className="lg:col-span-2 lg:sticky lg:top-4">
-                <ChatPanel auditId={audit.id} />
-              </div>
-            </div>
+            {/* AI Analysis — full width; chat lives in the floating ChatDock */}
+            <AnalysisPanel
+              auditId={audit.id}
+              resourceCounts={{}}
+              initialStore={summary.claude_analysis}
+              hasCost={hasCost}
+              usageTypes={summary.usage_types}
+            />
 
-            {/* Usage table */}
-            {hasUsage && (
-              <div className="glass" style={{ padding: '1.25rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <Activity size={15} color="var(--acc)" />
-                  <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Resource Utilization</h2>
-                </div>
-                <UsageTable groups={summary.usage_by_resource} />
-              </div>
-            )}
+            {/* Resource Utilization — nothing loads until a type is picked */}
+            {hasUsage && <UsageSection auditId={audit.id} usageTypes={summary.usage_types} />}
           </>
         )}
       </div>
+
+      {(hasCost || hasUsage) && (
+        <ChatDock
+          auditId={audit.id}
+          hasCost={hasCost}
+          usageTypes={summary.usage_types}
+        />
+      )}
     </>
   )
 }
