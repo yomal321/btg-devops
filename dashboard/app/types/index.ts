@@ -30,6 +30,9 @@ export interface Audit {
 export interface AuditDetail extends Audit {
   raw_data: Record<string, unknown>
   claude_analysis: Record<string, unknown> | null
+  has_cost: boolean
+  has_usage: boolean
+  usage_types: { slug: string; count: number }[]
 }
 
 export interface Finding {
@@ -46,13 +49,23 @@ export interface Finding {
 export interface ChatMessage {
   id: string
   audit_id: string
+  thread_id?: string | null
   user_id: string
   role: 'user' | 'assistant'
   content: string
   created_at: string
 }
 
-export interface CostUsageSummary {
+export interface ChatThread {
+  id: string
+  audit_id: string
+  title: string
+  created_at: string
+  updated_at: string
+  message_count?: number
+}
+
+export interface CostSummary {
   currency: string
   period_from: string
   period_to: string
@@ -60,11 +73,16 @@ export interface CostUsageSummary {
   daily_cost: { date: string; cost: number }[]
   top_services: { service: string; cost: number }[]
   total_resources_sampled: number
-  usage_by_resource: {
+  usage_types: { slug: string; count: number }[]
+  claude_analysis: Record<string, unknown> | null
+}
+
+export interface UsageSummary {
+  type: string
+  groups: {
     resource_id: string
     metrics: { metric_name: string; unit: string; avg: number | null; total: number | null }[]
   }[]
-  claude_analysis: Record<string, unknown> | null
 }
 
 export interface Subscription {

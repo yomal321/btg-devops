@@ -48,6 +48,20 @@ func CompleteAudit(ctx context.Context, pool *pgxpool.Pool, auditID string, rawD
 	return nil
 }
 
+// SaveCostUsageData saves the Cost and Usage extractor output into their own
+// columns, separate from raw_data — so reading cost/usage later never
+// requires Postgres to parse the much larger 12-resource-type blob. Either
+// argument may be nil if that extractor produced no data or failed.
+func SaveCostUsageData(ctx context.Context, pool *pgxpool.Pool, auditID string, costData json.RawMessage, usageData json.RawMessage) error {
+	_, err := pool.Exec(ctx, `
+		UPDATE audits SET cost_data = $2, usage_data = $3 WHERE id = $1
+	`, auditID, []byte(costData), []byte(usageData))
+	if err != nil {
+		return fmt.Errorf("saving cost/usage data: %w", err)
+	}
+	return nil
+}
+
 // FailAudit updates an audit row to status="failed" and records the error message.
 func FailAudit(ctx context.Context, pool *pgxpool.Pool, auditID string, errMsg string) error {
 	tag, err := pool.Exec(ctx, `

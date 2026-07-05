@@ -6,6 +6,8 @@ import { Badge } from './Badge'
 import { Modal } from './Modal'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { useModel, ModelPicker, MODEL_CATALOG } from '../lib/model'
+import { buildScopeGroups, scopeLabel, firstScope, UsageTypeInfo } from '../lib/scopes'
 import { severityConfig } from '../lib/utils'
 
 interface AnalysisFinding {
@@ -31,14 +33,6 @@ export interface AnalysisStore {
 
 const ALL_SCOPE = 'all'
 
-// Cost/Usage aren't resource types (no count in resourceCounts) — they're
-// billing/metric data attached to the audit separately. Labeled distinctly
-// in the scope dropdown rather than shown as "N resources".
-const EXTRA_SCOPE_LABELS: Record<string, string> = {
-  cost: 'Cost Management data',
-  usage: 'Azure Monitor usage data',
-}
-
 function normalizeStore(raw: unknown): AnalysisStore {
   if (!raw || typeof raw !== 'object') return {}
   const obj = raw as Record<string, unknown>
@@ -63,18 +57,25 @@ interface AnalysisPanelProps {
   auditId: string
   resourceCounts: Record<string, number>
   initialStore: unknown
-  /** Non-resource-count scopes available for this audit, e.g. ['cost', 'usage']. */
-  extraScopes?: string[]
+  hasCost?: boolean
+  usageTypes?: UsageTypeInfo[]
 }
 
-export function AnalysisPanel({ auditId, resourceCounts, initialStore, extraScopes = [] }: AnalysisPanelProps) {
+export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost = false, usageTypes = [] }: AnalysisPanelProps) {
   const { user } = useAuth()
   const canAnalyze = user?.role === 'admin' || user?.role === 'analyst'
 
+  const { choice } = useModel()
+  const modelLabel = MODEL_CATALOG.find(m => m.provider === choice.provider && m.model === choice.model)?.label || choice.model
+
   const resourceTypes = useMemo(() => Object.keys(resourceCounts || {}).sort(), [resourceCounts])
+  const scopeGroups = useMemo(
+    () => buildScopeGroups(resourceCounts, hasCost, usageTypes),
+    [resourceCounts, hasCost, usageTypes]
+  )
 
   const [store, setStore] = useState<AnalysisStore>(() => normalizeStore(initialStore))
-  const [scope, setScope] = useState<string>(resourceTypes[0] || extraScopes[0] || ALL_SCOPE)
+  const [scope, setScope] = useState<string>(() => firstScope(scopeGroups) || ALL_SCOPE)
   const [running, setRunning]   = useState(false)
   const [error, setError]       = useState('')
   const [showAllConfirm, setShowAllConfirm] = useState(false)
@@ -133,14 +134,17 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, extraScop
       {/* header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.875rem', flexWrap: 'wrap' }}>
         <Sparkles size={16} color="var(--acc)" />
-        <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)', flex: 1 }}>AI Analysis</h2>
+        <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>AI Analysis</h2>
         {currentAnalysis && (
-          <Badge color="success" label={`Cached · ${scope === ALL_SCOPE ? 'All Resources' : EXTRA_SCOPE_LABELS[scope] || scope} · ${new Date(currentAnalysis.generated_at).toLocaleDateString()}`} />
+          <Badge color="success" label={`Cached · ${scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)} · ${new Date(currentAnalysis.generated_at).toLocaleDateString()}`} />
         )}
+        <div style={{ marginLeft: 'auto' }}>
+          <ModelPicker />
+        </div>
       </div>
 
       {/* scope selector — always visible so viewers can browse cached results too */}
-      {(resourceTypes.length > 0 || extraScopes.length > 0) && (
+      {scopeGroups.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
           <label style={{ fontSize: '0.78rem', color: 'var(--t3)' }}>Analyze:</label>
           <select
@@ -149,20 +153,13 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, extraScop
             onChange={e => setScope(e.target.value)}
             disabled={running}
           >
-            {resourceTypes.length > 0 && (
-              <optgroup label="Resource types">
-                {resourceTypes.map(t => (
-                  <option key={t} value={t}>{t} ({resourceCounts[t]} resources)</option>
+            {scopeGroups.map(g => (
+              <optgroup key={g.label} label={g.label}>
+                {g.options.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </optgroup>
-            )}
-            {extraScopes.length > 0 && (
-              <optgroup label="Cost & Usage">
-                {extraScopes.map(s => (
-                  <option key={s} value={s}>{EXTRA_SCOPE_LABELS[s] || s}</option>
-                ))}
-              </optgroup>
-            )}
+            ))}
             {resourceTypes.length > 0 && (
               <option value={ALL_SCOPE}>— All Resources (all {resourceTypes.length} types) —</option>
             )}
@@ -184,13 +181,13 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, extraScop
         <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
           <p style={{ fontSize: '0.85rem', color: 'var(--t2)', marginBottom: '1rem' }}>
             {scope === ALL_SCOPE
-              ? 'Send the full audit (all resource types) to Claude in one request.'
-              : extraScopes.includes(scope)
-              ? `Send the ${EXTRA_SCOPE_LABELS[scope] || scope} to Claude for a focused analysis.`
-              : `Send only the "${scope}" resources to Claude for a focused, fast analysis.`}
+              ? `Send the full audit (all resource types) to ${modelLabel} in one request.`
+              : resourceTypes.includes(scope)
+              ? `Send only the "${scope}" resources to ${modelLabel} for a focused, fast analysis.`
+              : `Send the ${scopeLabel(scope, scopeGroups)} to ${modelLabel} for a focused analysis.`}
           </p>
           {error && <p style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '0.75rem' }}>{error}</p>}
-          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze with Claude</button>
+          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze with {modelLabel}</button>
         </div>
       )}
 
@@ -203,7 +200,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, extraScop
             borderRadius: '50%', animation: 'spin 0.8s linear infinite',
           }} />
           <p style={{ fontSize: '0.82rem', color: 'var(--t2)' }}>
-            {scope === ALL_SCOPE ? 'Sending the full audit for analysis…' : `Analyzing ${EXTRA_SCOPE_LABELS[scope] || scope}…`}
+            {scope === ALL_SCOPE ? 'Sending the full audit for analysis…' : `Analyzing ${scopeLabel(scope, scopeGroups)}…`}
           </p>
           <p style={{ fontSize: '0.72rem', color: 'var(--t4)', marginTop: '0.25rem' }}>
             {scope === ALL_SCOPE ? 'This can take a minute or more.' : 'This should only take a few seconds.'}
@@ -326,7 +323,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, extraScop
             }}>
               <TriangleAlert size={17} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
               <p style={{ fontSize: '0.82rem', color: 'var(--t2)', lineHeight: 1.55 }}>
-                This sends the complete audit dataset — all {resourceTypes.length} resource types — to Claude in a single request.
+                This sends the complete audit dataset — all {resourceTypes.length} resource types — to {modelLabel} in a single request.
                 It is slower and uses significantly more tokens than analyzing one resource type at a time.
               </p>
             </div>

@@ -1,8 +1,22 @@
 const TOKEN_KEY = 'btg_token'
+const MODEL_KEY = 'btg_model'
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null
   return localStorage.getItem(TOKEN_KEY)
+}
+
+// The model picker (lib/model.tsx) persists the selected provider/model here.
+// api.ts reads it at call time so analyze/chat requests carry the choice
+// without threading it through every component as props.
+function getModelChoice(): { provider: string; model: string } | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(MODEL_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
 }
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -22,20 +36,32 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 }
 
 export const api = {
+  llmStatus: () =>
+    apiFetch<{ claude: boolean; gemini: boolean; openrouter: boolean }>('/api/llm-status'),
+
   listAudits: () =>
     apiFetch<import('../types').Audit[]>('/api/audits'),
 
   getAudit: (id: string) =>
     apiFetch<import('../types').AuditDetail>(`/api/audits/${id}`),
 
-  getCostUsageSummary: (id: string) =>
-    apiFetch<import('../types').CostUsageSummary>(`/api/audits/${id}/cost-summary`),
+  getCostSummary: (id: string) =>
+    apiFetch<import('../types').CostSummary>(`/api/audits/${id}/cost-summary`),
 
-  analyzeAudit: (id: string, resource?: string) =>
-    apiFetch<{ audit_id: string; resource: string | null; cached: boolean; analysis: Record<string, unknown> }>(
-      `/api/audits/${id}/analysis${resource ? `?resource=${encodeURIComponent(resource)}` : ''}`,
+  getUsageSummary: (id: string, type: string) =>
+    apiFetch<import('../types').UsageSummary>(`/api/audits/${id}/usage-summary?type=${encodeURIComponent(type)}`),
+
+  analyzeAudit: (id: string, resource?: string) => {
+    const m = getModelChoice()
+    const qs = new URLSearchParams()
+    if (resource) qs.set('resource', resource)
+    if (m) { qs.set('provider', m.provider); qs.set('model', m.model) }
+    const query = qs.toString()
+    return apiFetch<{ audit_id: string; resource: string | null; cached: boolean; analysis: Record<string, unknown> }>(
+      `/api/audits/${id}/analysis${query ? `?${query}` : ''}`,
       { method: 'POST' }
-    ),
+    )
+  },
 
   listFindings: (auditId: string) =>
     apiFetch<import('../types').Finding[]>(`/api/audits/${auditId}/findings`),
@@ -43,14 +69,24 @@ export const api = {
   topFindings: (limit = 8) =>
     apiFetch<import('../types').Finding[]>(`/api/findings/top?limit=${limit}`),
 
-  listChat: (auditId: string) =>
-    apiFetch<import('../types').ChatMessage[]>(`/api/audits/${auditId}/chat`),
+  listChatThreads: (auditId: string) =>
+    apiFetch<import('../types').ChatThread[]>(`/api/audits/${auditId}/chat/threads`),
 
-  sendChat: (auditId: string, content: string) =>
-    apiFetch<{ reply: string }>(`/api/audits/${auditId}/chat`, {
+  listChat: (auditId: string, threadId: string) =>
+    apiFetch<import('../types').ChatMessage[]>(`/api/audits/${auditId}/chat/threads/${threadId}`),
+
+  deleteChatThread: (auditId: string, threadId: string) =>
+    apiFetch<{ message: string }>(`/api/audits/${auditId}/chat/threads/${threadId}`, { method: 'DELETE' }),
+
+  // threadId omitted → the backend starts a new conversation (titled from
+  // the question) and returns its id alongside the reply.
+  sendChat: (auditId: string, content: string, scope?: string, threadId?: string) => {
+    const m = getModelChoice()
+    return apiFetch<{ reply: string; thread_id: string }>(`/api/audits/${auditId}/chat`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
-    }),
+      body: JSON.stringify({ content, scope, thread_id: threadId, provider: m?.provider, model: m?.model }),
+    })
+  },
 
   getAuditResource: (auditId: string, slug: string) =>
     apiFetch<{ audit_id: string; resource: unknown; data: unknown }>(`/api/audits/${auditId}/resources/${slug}`),

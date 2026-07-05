@@ -7,6 +7,11 @@ export interface AuditCostUsageRaw {
   claude_analysis: Record<string, unknown> | null
 }
 
+export interface AuditCostRaw {
+  cost: CostDataRaw | null
+  claude_analysis: Record<string, unknown> | null
+}
+
 export async function findAllAudits(): Promise<Audit[]> {
   const { rows } = await pool.query(
     `SELECT id, created_at, subscription_id,
@@ -28,6 +33,8 @@ export async function findAuditById(auditId: string): Promise<AuditDetail | null
             COALESCE(error_message, '') AS error_message,
             COALESCE(resource_counts, '{}'::jsonb) AS resource_counts,
             claude_analysis IS NOT NULL AS has_analysis,
+            cost_data IS NOT NULL AS has_cost,
+            usage_data IS NOT NULL AS has_usage,
             COALESCE(raw_data, '{}'::jsonb) AS raw_data,
             claude_analysis
      FROM audits WHERE id = $1`,
@@ -36,15 +43,33 @@ export async function findAuditById(auditId: string): Promise<AuditDetail | null
   return rows[0] || null
 }
 
-// findAuditCostUsageRaw pulls ONLY the cost/usage/claude_analysis keys out of
-// raw_data — not the whole audit row — so the Cost & Usage page's summary
-// endpoint never has to transfer the other 12 resource types' data (or the
-// full, potentially many-thousand-row cost dataset) just to compute a few
-// aggregated numbers.
+// findAuditCostRaw reads cost_data + claude_analysis. cost_data is its own
+// column (not nested in raw_data), so this never touches the 12-resource-type
+// blob at all — fast regardless of how large raw_data has grown.
+export async function findAuditCostRaw(auditId: string): Promise<AuditCostRaw | null> {
+  const { rows } = await pool.query(
+    `SELECT cost_data AS cost, claude_analysis FROM audits WHERE id = $1`,
+    [auditId]
+  )
+  return rows[0] || null
+}
+
+// findAuditUsageRaw reads only usage_data — same isolation rationale as
+// findAuditCostRaw.
+export async function findAuditUsageRaw(auditId: string): Promise<UsageDataRaw | null> {
+  const { rows } = await pool.query(
+    `SELECT usage_data FROM audits WHERE id = $1`,
+    [auditId]
+  )
+  return rows[0]?.usage_data || null
+}
+
+// findAuditCostUsageRaw is kept for callers that still need both at once
+// (e.g. runAnalysis's "cost"/"usage" scopes) — two isolated columns, still
+// far cheaper than touching raw_data.
 export async function findAuditCostUsageRaw(auditId: string): Promise<AuditCostUsageRaw | null> {
   const { rows } = await pool.query(
-    `SELECT raw_data->'cost' AS cost, raw_data->'usage' AS usage, claude_analysis
-     FROM audits WHERE id = $1`,
+    `SELECT cost_data AS cost, usage_data AS usage, claude_analysis FROM audits WHERE id = $1`,
     [auditId]
   )
   return rows[0] || null

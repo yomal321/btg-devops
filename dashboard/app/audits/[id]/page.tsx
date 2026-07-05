@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import { Header } from '../../components/Header'
 import { Badge } from '../../components/Badge'
 import { AnalysisPanel } from '../../components/AnalysisPanel'
-import { ChatPanel } from '../../components/ChatPanel'
+import { ChatDock } from '../../components/ChatDock'
 import { RawDataSection } from '../../components/RawDataSection'
 import { DetailSkeleton } from '../../components/Skeleton'
 import { api } from '../../lib/api'
@@ -136,27 +136,30 @@ export default function AuditDetailPage() {
           )}
         </div>
 
-        {/* Sections B + C + D — only for non-failed audits */}
+        {/* Sections B + D — only for non-failed audits; chat lives in the
+            floating ChatDock so analysis gets the full page width */}
         {!failed && (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
-            {/* left column — analysis + raw data */}
-            <div className="lg:col-span-3 flex flex-col gap-5">
-              <AnalysisPanel
-                auditId={audit.id}
-                resourceCounts={counts}
-                initialStore={audit.claude_analysis}
-                extraScopes={['cost', 'usage'].filter(k => audit.raw_data?.[k])}
-              />
-              <RawDataSection auditId={audit.id} resourceCounts={counts} />
-            </div>
-
-            {/* right column — chat (sticky on desktop) */}
-            <div className="lg:col-span-2 lg:sticky lg:top-4">
-              <ChatPanel auditId={audit.id} />
-            </div>
+          <div className="flex flex-col gap-5">
+            <AnalysisPanel
+              auditId={audit.id}
+              resourceCounts={counts}
+              initialStore={audit.claude_analysis}
+              hasCost={audit.has_cost}
+              usageTypes={audit.usage_types}
+            />
+            <RawDataSection auditId={audit.id} resourceCounts={counts} />
           </div>
         )}
       </div>
+
+      {!failed && (
+        <ChatDock
+          auditId={audit.id}
+          resourceCounts={counts}
+          hasCost={audit.has_cost}
+          usageTypes={audit.usage_types}
+        />
+      )}
     </>
   )
 }

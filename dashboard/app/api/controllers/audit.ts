@@ -1,15 +1,32 @@
-import { findAllAudits, findAuditById, findAuditResource, findAuditCostUsageRaw, updateClaudeAnalysis, insertAudit, updateAudit, deleteAudit, clearClaudeAnalysis, findAnalysisById } from '../models/audit'
+import { findAllAudits, findAuditById, findAuditResource, findAuditCostRaw, findAuditUsageRaw, updateClaudeAnalysis, insertAudit, updateAudit, deleteAudit, clearClaudeAnalysis, findAnalysisById } from '../models/audit'
 import { findResourceBySlug } from '../models/resource'
 import { runAnalysis } from '../utils/claude'
-import { CostUsageSummary } from '../types'
+import { LLMProvider } from '../utils/llm'
+import { buildUsageGroups, listUsageTypes } from '../utils/usage'
+import { CostSummary, UsageSummary } from '../types'
+
+// Coerce an untrusted provider string from the request into a valid provider,
+// or undefined (which makes runAnalysis/runChat fall back to their default).
+function coerceProvider(p?: string): LLMProvider | undefined {
+  return p === 'claude' || p === 'gemini' || p === 'openrouter' ? p : undefined
+}
 
 function formatUsageDate(n: number): string {
   const s = String(n)
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
 }
 
-export async function getCostUsageSummaryController(auditId: string) {
-  const raw = await findAuditCostUsageRaw(auditId)
+// getCostSummaryController computes daily/service cost aggregates from
+// cost_data (its own column — never touches the 12-resource-type raw_data
+// blob) and lists which usage resource types have data, so the frontend can
+// populate a type dropdown without fetching all usage data up front.
+export async function getCostSummaryController(auditId: string) {
+  // cost_data and usage_data are independent columns — fetching them in
+  // parallel means total wait is the slower of the two, not the sum.
+  const [raw, usage] = await Promise.all([
+    findAuditCostRaw(auditId),
+    findAuditUsageRaw(auditId),
+  ])
   if (!raw) return { error: 'audit not found', status: 404 }
 
   const actualRows = raw.cost?.actual_cost_rows || []
@@ -32,46 +49,38 @@ export async function getCostUsageSummaryController(auditId: string) {
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 10)
 
-  const metrics = raw.usage?.metrics || []
-  const byResource = new Map<string, { metric_name: string; unit: string; avg: number | null; total: number | null; rank: number }[]>()
-  for (const m of metrics) {
-    const points = m.data_points || []
-    const avgPoints = points.filter(p => p.average !== undefined)
-    const totalPoints = points.filter(p => p.total !== undefined)
-    const avg = avgPoints.length ? avgPoints.reduce((s, p) => s + (p.average || 0), 0) / avgPoints.length : null
-    const total = totalPoints.length ? totalPoints.reduce((s, p) => s + (p.total || 0), 0) : null
-    const list = byResource.get(m.resource_id) || []
-    list.push({ metric_name: m.metric_name, unit: m.unit, avg, total, rank: total ?? avg ?? 0 })
-    byResource.set(m.resource_id, list)
-  }
+  const usageTypes = listUsageTypes(usage?.metrics || [])
 
-  const usageByResource = Array.from(byResource.entries())
-    .map(([resource_id, list]) => ({
-      resource_id,
-      rank: Math.max(0, ...list.map(m => m.rank)),
-      metrics: list.map(m => ({ metric_name: m.metric_name, unit: m.unit, avg: m.avg, total: m.total })),
-    }))
-    .sort((a, b) => b.rank - a.rank)
-    .map(({ resource_id, metrics }) => ({ resource_id, metrics }))
-
-  const summary: CostUsageSummary = {
+  const summary: CostSummary = {
     currency,
-    period_from: raw.cost?.period_from || raw.usage?.period_from || '',
-    period_to: raw.cost?.period_to || raw.usage?.period_to || '',
+    period_from: raw.cost?.period_from || '',
+    period_to: raw.cost?.period_to || '',
     total_cost_rows: raw.cost?.total_rows || 0,
     daily_cost: dailyCost,
     top_services: topServices,
-    total_resources_sampled: raw.usage?.total_resources_sampled || 0,
-    usage_by_resource: usageByResource,
+    total_resources_sampled: usage?.total_resources_sampled || 0,
+    usage_types: usageTypes,
     claude_analysis: raw.claude_analysis,
   }
 
   return { data: summary, status: 200 }
 }
 
-export async function runAnalysisController(auditId: string, resourceSlug?: string) {
+// getUsageSummaryController aggregates utilization data for ONE resource
+// type only, computed on demand — the frontend calls this after the user
+// picks a type from the dropdown, instead of loading all resource types'
+// usage data up front.
+export async function getUsageSummaryController(auditId: string, type: string) {
+  const usage = await findAuditUsageRaw(auditId)
+  if (!usage) return { error: 'no usage data for this audit', status: 404 }
+
+  const summary: UsageSummary = { type, groups: buildUsageGroups(usage.metrics || [], type) }
+  return { data: summary, status: 200 }
+}
+
+export async function runAnalysisController(auditId: string, resourceSlug?: string, provider?: string, model?: string) {
   try {
-    const result = await runAnalysis(auditId, resourceSlug)
+    const result = await runAnalysis(auditId, resourceSlug, coerceProvider(provider), model || undefined)
     if (result.error) return { error: result.error, status: result.status }
     return {
       data: { audit_id: auditId, resource: resourceSlug || null, cached: result.cached, analysis: result.analysis },
@@ -103,7 +112,16 @@ export async function getAuditController(auditId: string, resourceSlug?: string 
 
   const audit = await findAuditById(auditId)
   if (!audit) return { error: 'audit not found', status: 404 }
-  return { data: audit, status: 200 }
+
+  // usage_types lets the frontend build a per-resource-type scope dropdown
+  // (Analyze, Chat) without fetching all usage data up front.
+  let usageTypes: ReturnType<typeof listUsageTypes> = []
+  if (audit.has_usage) {
+    const usage = await findAuditUsageRaw(auditId)
+    usageTypes = listUsageTypes(usage?.metrics || [])
+  }
+
+  return { data: { ...audit, usage_types: usageTypes }, status: 200 }
 }
 
 export async function saveAnalysisController(auditId: string, body: object) {

@@ -20,7 +20,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params
   const resource = req.nextUrl.searchParams.get('resource') || undefined
-  const result = await runAnalysisController(id, resource)
+  const provider = req.nextUrl.searchParams.get('provider') || undefined
+  const model = req.nextUrl.searchParams.get('model') || undefined
+  const result = await runAnalysisController(id, resource, provider, model)
   if (result.error) return NextResponse.json({ error: result.error }, { status: result.status })
   return NextResponse.json(result.data)
 }

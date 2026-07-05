@@ -1,11 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, KeyboardEvent } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { MessageSquare, Lock, Send } from 'lucide-react'
+import { MessageSquare, Lock, Send, Plus, Trash2 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
-import type { ChatMessage } from '../types'
+import { ModelPicker } from '../lib/model'
+import { buildScopeGroups, UsageTypeInfo } from '../lib/scopes'
+import type { ChatMessage, ChatThread } from '../types'
+
+const ALL_SCOPE = 'all'
 
 const SUGGESTIONS = [
   'What is my biggest cost problem?',
@@ -24,11 +28,31 @@ function renderBold(text: string) {
   )
 }
 
-export function ChatPanel({ auditId }: { auditId: string }) {
+interface ChatPanelProps {
+  auditId: string
+  resourceCounts?: Record<string, number>
+  hasCost?: boolean
+  usageTypes?: UsageTypeInfo[]
+  /** 'card' = standalone glass card with capped height (default);
+   *  'dock' = fills its container edge-to-edge (used inside ChatDock). */
+  variant?: 'card' | 'dock'
+}
+
+export function ChatPanel({ auditId, resourceCounts = {}, hasCost = false, usageTypes = [], variant = 'card' }: ChatPanelProps) {
   const { user } = useAuth()
   const canChat = user?.role === 'admin' || user?.role === 'analyst'
 
+  const scopeGroups = useMemo(
+    () => buildScopeGroups(resourceCounts, hasCost, usageTypes),
+    [resourceCounts, hasCost, usageTypes]
+  )
+  const [scope, setScope] = useState<string>(ALL_SCOPE)
+
   const searchParams = useSearchParams()
+  // activeThreadId === null → a fresh, not-yet-saved conversation; the
+  // backend creates the thread (titled from the question) on first send.
+  const [threads, setThreads] = useState<ChatThread[]>([])
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput]       = useState('')
   const [sending, setSending]   = useState(false)
@@ -36,10 +60,29 @@ export function ChatPanel({ auditId }: { auditId: string }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const askSent   = useRef(false)
 
+  // Load the conversation list; resume the most recent one by default —
+  // unless arriving with a prefilled question (?ask=...), which starts its
+  // own fresh conversation and must not be clobbered by auto-select.
   useEffect(() => {
     if (!canChat) return
-    api.listChat(auditId).then(setMessages).catch(() => {})
-  }, [auditId, canChat])
+    const hasAsk = !!searchParams.get('ask')
+    api.listChatThreads(auditId)
+      .then(list => {
+        setThreads(list)
+        if (list.length > 0 && !hasAsk) {
+          setActiveThreadId(current => current ?? list[0].id)
+        }
+      })
+      .catch(() => {})
+  }, [auditId, canChat, searchParams])
+
+  // Load messages whenever the active conversation changes. Clearing on
+  // "no thread" happens in the event handlers (newChat/removeThread/select)
+  // rather than here, per react-hooks/set-state-in-effect.
+  useEffect(() => {
+    if (!canChat || !activeThreadId) return
+    api.listChat(auditId, activeThreadId).then(setMessages).catch(() => {})
+  }, [auditId, activeThreadId, canChat])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -58,17 +101,45 @@ export function ChatPanel({ auditId }: { auditId: string }) {
     }])
 
     try {
-      const result = await api.sendChat(auditId, content)
+      const result = await api.sendChat(auditId, content, scope === ALL_SCOPE ? undefined : scope, activeThreadId || undefined)
       setMessages(m => [...m, {
         id: `tmp-a-${m.length}`, audit_id: auditId, user_id: '',
         role: 'assistant', content: result.reply, created_at: '',
       }])
+      // First message of a fresh chat: the backend created the thread —
+      // adopt it and refresh the list so its auto-title shows up.
+      if (!activeThreadId) setActiveThreadId(result.thread_id)
+      api.listChatThreads(auditId).then(setThreads).catch(() => {})
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Message failed')
     } finally {
       setSending(false)
     }
-  }, [auditId, user?.id])
+  }, [auditId, user?.id, scope, activeThreadId])
+
+  function newChat() {
+    setActiveThreadId(null)
+    setMessages([])
+    setError('')
+  }
+
+  async function removeThread() {
+    if (!activeThreadId) return
+    try {
+      await api.deleteChatThread(auditId, activeThreadId)
+      const rest = threads.filter(t => t.id !== activeThreadId)
+      setThreads(rest)
+      setActiveThreadId(rest[0]?.id || null)
+      if (!rest[0]) setMessages([])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+    }
+  }
+
+  function switchThread(id: string | null) {
+    setActiveThreadId(id)
+    if (!id) setMessages([])
+  }
 
   // prefilled question handoff (e.g. from the audit comparison page: ?ask=...)
   useEffect(() => {
@@ -86,13 +157,94 @@ export function ChatPanel({ auditId }: { auditId: string }) {
     }
   }
 
+  const dock = variant === 'dock'
+
   return (
-    <div className="glass" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 420, maxHeight: 640 }}>
-      {/* header */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
-        <MessageSquare size={15} color="var(--acc)" style={{ alignSelf: 'center' }} />
-        <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Ask about this audit</h2>
-        <span style={{ fontSize: '0.7rem', color: 'var(--t4)' }}>scoped to this audit</span>
+    <div
+      className={dock ? undefined : 'glass'}
+      style={{
+        display: 'flex', flexDirection: 'column', height: '100%',
+        ...(dock ? {} : { minHeight: 420, maxHeight: 640 }),
+      }}
+    >
+      {/* header — extra right padding in dock mode so the dock's X button doesn't overlap */}
+      <div style={{ padding: dock ? '1rem 2.5rem 1rem 1.25rem' : '1rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <MessageSquare size={15} color="var(--acc)" style={{ alignSelf: 'center' }} />
+          <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Ask about this audit</h2>
+          <div style={{ marginLeft: 'auto' }}>
+            <ModelPicker />
+          </div>
+        </div>
+        {scopeGroups.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: '0.72rem', color: 'var(--t3)' }}>Ask about:</label>
+            <select
+              value={scope}
+              onChange={e => setScope(e.target.value)}
+              style={{
+                background: 'var(--input-bg)', border: '1px solid var(--border-strong)',
+                borderRadius: 8, color: 'var(--t2)', padding: '0.3rem 0.5rem', fontSize: '0.75rem', cursor: 'pointer', maxWidth: '100%',
+              }}
+            >
+              <option value={ALL_SCOPE}>Everything in this audit</option>
+              {scopeGroups.map(g => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.options.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* conversation switcher — like a normal AI chat app */}
+        {canChat && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+            <select
+              value={activeThreadId || ''}
+              onChange={e => switchThread(e.target.value || null)}
+              disabled={sending}
+              style={{
+                flex: 1, minWidth: 0,
+                background: 'var(--input-bg)', border: '1px solid var(--border-strong)',
+                borderRadius: 8, color: 'var(--t2)', padding: '0.3rem 0.5rem', fontSize: '0.75rem', cursor: 'pointer',
+              }}
+            >
+              {!activeThreadId && <option value="">New chat</option>}
+              {threads.map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.title}{t.message_count ? ` (${t.message_count})` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={newChat}
+              disabled={sending || !activeThreadId}
+              title="Start a new chat"
+              style={{
+                background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: 8,
+                color: 'var(--t2)', padding: '0.3rem 0.45rem', cursor: 'pointer', display: 'flex',
+                opacity: !activeThreadId ? 0.5 : 1,
+              }}
+            >
+              <Plus size={14} />
+            </button>
+            <button
+              onClick={removeThread}
+              disabled={sending || !activeThreadId}
+              title="Delete this chat"
+              style={{
+                background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: 8,
+                color: '#ef4444', padding: '0.3rem 0.45rem', cursor: 'pointer', display: 'flex',
+                opacity: !activeThreadId ? 0.5 : 1,
+              }}
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        )}
       </div>
 
       {!canChat ? (
