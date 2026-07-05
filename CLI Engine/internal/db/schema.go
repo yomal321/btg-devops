@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS audits (
   resource_counts   JSONB
 );
 
+-- cost_data and usage_data are stored as their own columns, not nested
+-- inside raw_data, so a query that only needs cost/usage never has to
+-- decompress+parse the (much larger) 12-resource-type raw_data blob.
+ALTER TABLE audits ADD COLUMN IF NOT EXISTS cost_data  JSONB;
+ALTER TABLE audits ADD COLUMN IF NOT EXISTS usage_data JSONB;
+
 CREATE TABLE IF NOT EXISTS findings (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   audit_id        UUID NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
@@ -66,6 +72,39 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content    TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- chat_threads gives each audit multiple separate conversations (like a
+-- normal AI chat app). Messages hang off a thread; the LLM only ever sees
+-- one thread's history at a time.
+CREATE TABLE IF NOT EXISTS chat_threads (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  audit_id   UUID NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+  title      TEXT NOT NULL DEFAULT 'New chat',
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_id UUID REFERENCES chat_threads(id) ON DELETE CASCADE;
+
+-- Backfill (one-time, idempotent): messages created before threads existed
+-- get grouped into one "Conversation 1" thread per audit.
+INSERT INTO chat_threads (audit_id, title, created_by, created_at)
+SELECT m.audit_id, 'Conversation 1',
+       (ARRAY_AGG(m.user_id ORDER BY m.created_at))[1],
+       MIN(m.created_at)
+FROM chat_messages m
+WHERE m.thread_id IS NULL
+GROUP BY m.audit_id;
+
+UPDATE chat_messages m
+SET thread_id = t.id
+FROM (
+  SELECT DISTINCT ON (audit_id) id, audit_id
+  FROM chat_threads
+  ORDER BY audit_id, created_at ASC
+) t
+WHERE m.thread_id IS NULL AND t.audit_id = m.audit_id;
 
 CREATE TABLE IF NOT EXISTS resources (
   id          SERIAL PRIMARY KEY,

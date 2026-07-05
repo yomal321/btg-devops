@@ -97,7 +97,14 @@ func ExtractUsage(ctx context.Context, subID string, cred azcore.TokenCredential
 				result, err := metricsClient.List(metricCtx, j.resourceID, &armmonitor.MetricsClientListOptions{
 					Metricnames: strPtr(strings.Join(j.metricNames, ",")),
 					Timespan:    strPtr(timespan),
-					Interval:    strPtr("PT1H"),
+					// Daily (not hourly) — the dashboard only ever displays a
+					// period-level average/total, so 30 daily points is all
+					// the resolution that's actually used. Hourly (720
+					// points/metric) made usage_data over 1MB per audit and
+					// took several seconds just to decompress on every page
+					// load; daily cuts that ~24x while still leaving room for
+					// a future day-by-day usage trend chart if one is built.
+					Interval:    strPtr("P1D"),
 					Aggregation: strPtr("Average,Total,Count"),
 				})
 				cancel()
@@ -215,11 +222,36 @@ func cleanMetricResult(resourceID string, metrics []*armmonitor.Metric) ([]json.
 			}
 		}
 
+		// Pre-computed once here so every dashboard page load doesn't have to
+		// re-loop over data_points just to get the same average/total.
+		var avgSum float64
+		var avgCount int
+		var totalSum float64
+		var totalCount int
+		for _, p := range dataPoints {
+			if v, ok := p["average"].(float64); ok {
+				avgSum += v
+				avgCount++
+			}
+			if v, ok := p["total"].(float64); ok {
+				totalSum += v
+				totalCount++
+			}
+		}
+		summary := map[string]any{"avg": nil, "total": nil}
+		if avgCount > 0 {
+			summary["avg"] = avgSum / float64(avgCount)
+		}
+		if totalCount > 0 {
+			summary["total"] = totalSum
+		}
+
 		entry := map[string]any{
 			"resource_id": resourceID,
 			"metric_name": name,
 			"unit":        unit,
 			"data_points": dataPoints,
+			"summary":     summary,
 		}
 		clean, err := json.Marshal(entry)
 		if err != nil {

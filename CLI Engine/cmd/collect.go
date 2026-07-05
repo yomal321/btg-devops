@@ -147,14 +147,6 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		{"resourcegroup", func() (any, error) { return extractors.ExtractResourceGroup(ctx, subID, cred) }},
 	}
 
-	// Cost and Usage are collected separately from resourceCounts below —
-	// they're billing/metric data, not resource inventory counts, so they
-	// don't get a tile on the dashboard's per-audit resource-count grid.
-	costUsageExtractors := []extractor{
-		{"cost", func() (any, error) { return extractors.ExtractCost(ctx, subID, cred) }},
-		{"usage", func() (any, error) { return extractors.ExtractUsage(ctx, subID, cred) }},
-	}
-
 	rawData := map[string]any{
 		"collected_at":    time.Now().UTC().Format(time.RFC3339),
 		"subscription_id": subID,
@@ -177,16 +169,21 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		resourceCounts[e.key] = countResources(data)
 	}
 
-	for i, e := range costUsageExtractors {
-		fmt.Fprintf(os.Stderr, "[%d/%d] Extracting %s...\n", i+1, len(costUsageExtractors), e.key)
-		data, err := e.run()
-		if err != nil {
-			extractErrors = append(extractErrors, fmt.Sprintf("%s: %v", e.key, err))
-			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
-			rawData[e.key] = nil
-			continue
-		}
-		rawData[e.key] = data
+	// Cost and Usage are saved into their own columns (see SaveCostUsageData
+	// below), not merged into raw_data — keeping them out of that blob means
+	// reading cost/usage later never requires Postgres to parse the much
+	// larger 12-resource-type JSON just to pull out these two keys.
+	fmt.Fprintf(os.Stderr, "[1/2] Extracting cost...\n")
+	costData, err := extractors.ExtractCost(ctx, subID, cred)
+	if err != nil {
+		extractErrors = append(extractErrors, fmt.Sprintf("cost: %v", err))
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "[2/2] Extracting usage...\n")
+	usageData, err := extractors.ExtractUsage(ctx, subID, cred)
+	if err != nil {
+		extractErrors = append(extractErrors, fmt.Sprintf("usage: %v", err))
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 
 	// --- Serialize and save ---
@@ -202,6 +199,21 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	}
 	if err := db.CompleteAudit(ctx, pool, auditID, json.RawMessage(rawJSON), json.RawMessage(countsJSON)); err != nil {
 		return fmt.Errorf("saving audit: %w", err)
+	}
+
+	var costJSON, usageJSON json.RawMessage
+	if costData != nil {
+		if costJSON, err = json.Marshal(costData); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: marshaling cost data: %v\n", err)
+		}
+	}
+	if usageData != nil {
+		if usageJSON, err = json.Marshal(usageData); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: marshaling usage data: %v\n", err)
+		}
+	}
+	if err := db.SaveCostUsageData(ctx, pool, auditID, costJSON, usageJSON); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 
 	// --- Print summary ---
