@@ -1,14 +1,15 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw } from 'lucide-react'
 import { Badge } from './Badge'
 import { Modal } from './Modal'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useModel, ModelPicker, MODEL_CATALOG } from '../lib/model'
 import { buildScopeGroups, scopeLabel, firstScope, UsageTypeInfo } from '../lib/scopes'
-import { severityConfig } from '../lib/utils'
+import { severityConfig, findingStatusConfig, findingAge } from '../lib/utils'
+import type { Finding } from '../types'
 
 interface AnalysisFinding {
   severity: 'Critical' | 'Warning' | 'Info'
@@ -17,6 +18,14 @@ interface AnalysisFinding {
   resource_name: string
   issue: string
   recommendation: string
+}
+
+// What the findings cards render. DB-backed rows carry lifecycle fields
+// (id/status/age); findings read from a legacy cached-analysis JSON don't.
+interface DisplayFinding extends AnalysisFinding {
+  id?: string
+  status?: 'open' | 'resolved' | 'dismissed'
+  first_seen_at?: string
 }
 
 export interface Analysis {
@@ -84,6 +93,21 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
 
   const currentAnalysis = scope === ALL_SCOPE ? store.all : store.by_resource?.[scope]
 
+  // DB-backed findings for the current scope — these carry lifecycle fields
+  // (status, first_seen_at) the cached-analysis JSON doesn't have. Tagged
+  // with the scope they were fetched for so a stale response can't render
+  // under a different scope.
+  const [dbFindings, setDbFindings] = useState<{ scope: string; rows: Finding[] } | null>(null)
+
+  useEffect(() => {
+    if (!currentAnalysis) return
+    let cancelled = false
+    api.listFindings(auditId, scope)
+      .then(rows => { if (!cancelled) setDbFindings({ scope, rows }) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [auditId, scope, currentAnalysis])
+
   async function analyzeScope(slug: string) {
     setRunning(true)
     setError('')
@@ -95,6 +119,8 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
           ? { ...s, all: analysis }
           : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
       )
+      // Findings were just (re)written server-side — refresh the DB copies.
+      api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed')
     } finally {
@@ -107,7 +133,31 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
     else analyzeScope(scope)
   }
 
-  const findings = useMemo(() => currentAnalysis?.findings || [], [currentAnalysis])
+  async function setFindingStatus(id: string, status: 'open' | 'dismissed') {
+    try {
+      await api.updateFinding(auditId, id, { status })
+      setDbFindings(d => d && { ...d, rows: d.rows.map(r => (r.id === id ? { ...r, status } : r)) })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Status update failed')
+    }
+  }
+
+  const findings: DisplayFinding[] = useMemo(() => {
+    if (dbFindings && dbFindings.scope === scope && dbFindings.rows.length > 0) {
+      return dbFindings.rows.map(r => ({
+        id: r.id,
+        severity: r.severity,
+        category: r.category || '',
+        resource_type: r.resource_type,
+        resource_name: r.resource_name,
+        issue: r.issue,
+        recommendation: r.recommendation,
+        status: r.status,
+        first_seen_at: r.first_seen_at,
+      }))
+    }
+    return currentAnalysis?.findings || []
+  }, [dbFindings, scope, currentAnalysis])
   const counts = {
     Critical: findings.filter(f => f.severity === 'Critical').length,
     Warning:  findings.filter(f => f.severity === 'Warning').length,
@@ -278,21 +328,38 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {filtered.map((f, i) => {
                 const sc = severityConfig[f.severity] || { label: f.severity, color: 'muted' }
+                const age = f.first_seen_at ? findingAge(f.first_seen_at) : null
+                const st = f.status && f.status !== 'open' ? findingStatusConfig[f.status] : null
                 return (
-                  <div key={i} style={{
+                  <div key={f.id || i} style={{
                     border: '1px solid var(--border)', borderRadius: 8, padding: '0.875rem 1rem',
                     background: 'var(--input-bg)',
+                    opacity: f.status === 'dismissed' ? 0.55 : 1,
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                       {severityIcons[f.severity]}
                       <Badge color={sc.color} label={sc.label} />
                       {f.category && <Badge color="muted" label={f.category} />}
+                      {age && <Badge color={age.color} label={age.label} />}
+                      {st && <Badge color={st.color} label={st.label} />}
                       <span style={{
                         marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--t4)',
                         fontFamily: 'ui-monospace, monospace',
                       }}>
                         {f.resource_type}{f.resource_name ? ` · ${f.resource_name}` : ''}
                       </span>
+                      {canAnalyze && f.id && f.status !== 'resolved' && (
+                        <button
+                          onClick={() => setFindingStatus(f.id!, f.status === 'dismissed' ? 'open' : 'dismissed')}
+                          title={f.status === 'dismissed' ? 'Reopen this finding' : "Dismiss (won't fix / accepted risk)"}
+                          style={{
+                            background: 'none', border: '1px solid var(--border-strong)', borderRadius: 6,
+                            color: 'var(--t3)', padding: '0.2rem 0.35rem', cursor: 'pointer', display: 'flex',
+                          }}
+                        >
+                          {f.status === 'dismissed' ? <RotateCcw size={12} /> : <EyeOff size={12} />}
+                        </button>
+                      )}
                     </div>
                     <p style={{ fontSize: '0.82rem', color: 'var(--t1)', lineHeight: 1.55 }}>{f.issue}</p>
                     {f.recommendation && (

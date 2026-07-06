@@ -39,10 +39,15 @@ export interface Finding {
   id: string
   audit_id: string
   severity: 'Critical' | 'Warning' | 'Info'
+  category: string | null
   resource_type: string
   resource_name: string
   issue: string
   recommendation: string
+  scope: string | null
+  status: 'open' | 'resolved' | 'dismissed'
+  first_seen_at: string
+  resolved_at: string | null
   created_at: string
 }
 
@@ -82,6 +87,15 @@ export interface UsageSummary {
   groups: {
     resource_id: string
     metrics: { metric_name: string; unit: string; avg: number | null; total: number | null }[]
+  }[]
+}
+
+export interface RegionSummary {
+  distribution: { region: string; count: number }[]
+  mismatches: {
+    region: string
+    computeResources: { type: string; name: string }[]
+    dataRegions: string[]
   }[]
 }
 

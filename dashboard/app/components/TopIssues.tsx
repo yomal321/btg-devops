@@ -6,7 +6,7 @@ import { AlertCircle, AlertTriangle, Info, Flame, ArrowRight } from 'lucide-reac
 import { Badge } from './Badge'
 import { Skeleton } from './Skeleton'
 import { api } from '../lib/api'
-import { shortId, severityConfig } from '../lib/utils'
+import { shortId, severityConfig, findingAge } from '../lib/utils'
 import type { Finding } from '../types'
 
 const severityIcons = {
@@ -51,6 +51,7 @@ export function TopIssues() {
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {findings.map(f => {
             const sc = severityConfig[f.severity] || { label: f.severity, color: 'muted' }
+            const age = f.first_seen_at ? findingAge(f.first_seen_at) : null
             return (
               <Link
                 key={f.id}
@@ -64,6 +65,7 @@ export function TopIssues() {
               >
                 {severityIcons[f.severity] || severityIcons.Info}
                 <Badge color={sc.color} label={sc.label} />
+                {age && <Badge color={age.color} label={age.label} />}
                 <span style={{
                   flex: 1, fontSize: '0.8rem', color: 'var(--t1)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',

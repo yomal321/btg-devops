@@ -51,6 +51,9 @@ export const api = {
   getUsageSummary: (id: string, type: string) =>
     apiFetch<import('../types').UsageSummary>(`/api/audits/${id}/usage-summary?type=${encodeURIComponent(type)}`),
 
+  getRegionSummary: (id: string) =>
+    apiFetch<import('../types').RegionSummary>(`/api/audits/${id}/region-summary`),
+
   analyzeAudit: (id: string, resource?: string) => {
     const m = getModelChoice()
     const qs = new URLSearchParams()
@@ -63,8 +66,14 @@ export const api = {
     )
   },
 
-  listFindings: (auditId: string) =>
-    apiFetch<import('../types').Finding[]>(`/api/audits/${auditId}/findings`),
+  listFindings: (auditId: string, scope?: string) =>
+    apiFetch<import('../types').Finding[]>(`/api/audits/${auditId}/findings${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`),
+
+  updateFinding: (auditId: string, findingId: string, data: { status?: string }) =>
+    apiFetch<{ message: string }>(`/api/audits/${auditId}/findings/${findingId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
 
   topFindings: (limit = 8) =>
     apiFetch<import('../types').Finding[]>(`/api/findings/top?limit=${limit}`),

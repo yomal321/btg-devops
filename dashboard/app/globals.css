@@ -10,7 +10,8 @@
   --input-bg: rgba(255, 255, 255, 0.03);
   --border: rgba(255, 255, 255, 0.06);
   --border-strong: rgba(255, 255, 255, 0.1);
-  --radius: 10px;
+  --radius: 16px;
+  --shadow-card: 0 8px 24px -12px rgba(0, 0, 0, 0.45);
   --t1: #e2e8f0;
   --t2: #94a3b8;
   --t3: #64748b;
@@ -38,6 +39,7 @@ html.light {
   --acc-soft: rgba(37, 99, 235, 0.08);
   --panel: #ffffff;
   --chart-grid: rgba(15, 23, 42, 0.06);
+  --shadow-card: 0 8px 24px -14px rgba(15, 23, 42, 0.18);
 }
 
 /* ── Tailwind theme extension (Tailwind v4) ─────────────────── */
@@ -73,6 +75,7 @@ html.light {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     backdrop-filter: blur(8px);
+    box-shadow: var(--shadow-card);
   }
 
   .field {

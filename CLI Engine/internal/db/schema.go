@@ -64,6 +64,27 @@ CREATE TABLE IF NOT EXISTS findings (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- scope records which Analyze scope produced this row (e.g. "storage",
+-- "cost", "usage:storage", "all") — NOT the same as resource_type, which is
+-- the LLM's own labeling of the affected resource and isn't reliable enough
+-- to detect "these rows came from the same analysis run" on its own. Lets
+-- re-analyzing a scope delete-and-replace just that scope's old findings
+-- instead of accumulating duplicates on every re-run.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS scope TEXT;
+
+-- Findings lifecycle: status tracks open/resolved/dismissed (validated in
+-- the dashboard API, not a DB CHECK, since ALTER..ADD CONSTRAINT isn't
+-- idempotent); first_seen_at carries the date an issue was FIRST flagged
+-- across successive audits (so a week-old unfixed problem shows "7 days
+-- old", not "new" on every audit); resolved_at records when an issue
+-- stopped appearing. category is the LLM's classification (Security, Cost
+-- Waste, ...) — now persisted since it's part of the cross-audit match key.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS category      TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS status        TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS resolved_at   TIMESTAMPTZ;
+UPDATE findings SET first_seen_at = created_at WHERE first_seen_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   audit_id   UUID NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
