@@ -47,6 +47,9 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SECRET_PROVIDER: ${{ secrets.SECRET_PROVIDER }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
         run: |
           ./btg-devops collect \
             --trigger "${{ steps.trigger.outputs.type }}"

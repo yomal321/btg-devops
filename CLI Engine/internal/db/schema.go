@@ -147,6 +147,22 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   last_audit_at     TIMESTAMPTZ
 );
 
+-- notification_role_settings drives who gets audit-failed alert emails: an
+-- admin toggles which roles are "enabled", and the alert is sent to every
+-- currently-active user in an enabled role — no per-person list to maintain
+-- as users join/leave. Seeding admin=true preserves pre-existing behavior
+-- (admins were the only recipients before this table existed) with zero
+-- required configuration; ON CONFLICT DO NOTHING keeps the seed idempotent.
+CREATE TABLE IF NOT EXISTS notification_role_settings (
+  role       TEXT PRIMARY KEY CHECK (role IN ('admin', 'analyst', 'viewer')),
+  enabled    BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO notification_role_settings (role, enabled) VALUES
+  ('admin', TRUE), ('analyst', FALSE), ('viewer', FALSE)
+ON CONFLICT (role) DO NOTHING;
+
 CREATE INDEX IF NOT EXISTS idx_findings_audit_id            ON findings(audit_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_audit_id       ON chat_messages(audit_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash     ON user_sessions(token_hash);

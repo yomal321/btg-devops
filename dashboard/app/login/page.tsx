@@ -31,8 +31,8 @@ export default function LoginPage() {
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'var(--bg)',
       backgroundImage: `
-        radial-gradient(ellipse at 30% 40%, rgba(96,165,250,0.07) 0%, transparent 60%),
-        radial-gradient(ellipse at 70% 70%, rgba(168,85,247,0.07) 0%, transparent 60%)
+        radial-gradient(ellipse at 30% 40%, rgba(139,92,246,0.09) 0%, transparent 60%),
+        radial-gradient(ellipse at 70% 70%, rgba(56,189,248,0.07) 0%, transparent 60%)
       `,
       padding: '1.5rem', position: 'relative',
     }}>
@@ -45,7 +45,7 @@ export default function LoginPage() {
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <div style={{
             width: 48, height: 48, borderRadius: 12, margin: '0 auto 1rem',
-            background: 'linear-gradient(135deg, #60a5fa, #7c3aed)',
+            background: 'linear-gradient(135deg, #8B5CF6, #38BDF8)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '0.8rem', fontWeight: 700, color: '#fff',
           }}>

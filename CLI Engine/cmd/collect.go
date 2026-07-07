@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -12,6 +13,7 @@ import (
 	"github.com/chanbistec/btg-devops/internal/crypto"
 	"github.com/chanbistec/btg-devops/internal/db"
 	"github.com/chanbistec/btg-devops/internal/extractors"
+	"github.com/chanbistec/btg-devops/internal/mailer"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 )
@@ -81,12 +83,40 @@ func runCollect(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintf(os.Stderr, "Auditing %d subscription(s)...\n\n", len(subs))
 
+	var collectErrs []string
 	for _, sub := range subs {
 		if err := collectForSubscription(ctx, pool, sub, collectTrigger); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR auditing %s: %v\n", sub.SubscriptionName, err)
+			collectErrs = append(collectErrs, fmt.Sprintf("%s: %v", sub.SubscriptionName, err))
 		}
 	}
+	if len(collectErrs) > 0 {
+		return fmt.Errorf("audit collection failed for %d subscription(s): %s", len(collectErrs), strings.Join(collectErrs, "; "))
+	}
 	return nil
+}
+
+// failAndAlert marks the audit row failed and sends a best-effort email
+// alert to every active user in a notification-enabled role. Centralized
+// here so every failure path reports through the same channel instead of
+// some being silent (see plan: audit-failed email).
+func failAndAlert(ctx context.Context, pool *pgxpool.Pool, auditID string, sub db.SubscriptionCredentials, reason string) {
+	_ = db.FailAudit(ctx, pool, auditID, reason)
+
+	var recipients []string
+	if roles, err := db.FindEnabledRoles(ctx, pool); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: could not resolve notification roles: %v\n", err)
+	} else if emails, err := db.FindActiveUserEmailsByRoles(ctx, pool, roles); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: could not resolve notification recipients: %v\n", err)
+	} else {
+		recipients = emails
+	}
+
+	mailer.SendAlert(
+		fmt.Sprintf("btg-devops audit failed: %s", sub.SubscriptionName),
+		fmt.Sprintf("Audit %s for subscription %s (%s) failed.\n\nReason: %s", auditID, sub.SubscriptionName, sub.SubscriptionID, reason),
+		recipients,
+	)
 }
 
 func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.SubscriptionCredentials, trigger string) error {
@@ -107,12 +137,12 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	if sub.ClientSecretEnc != "" {
 		secret, err := crypto.DecryptSecret(sub.ClientSecretEnc)
 		if err != nil {
-			_ = db.FailAudit(ctx, pool, auditID, fmt.Sprintf("decrypt credentials failed: %v", err))
+			failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("decrypt credentials failed: %v", err))
 			return fmt.Errorf("decrypt credentials: %w", err)
 		}
 		cred, err = azidentity.NewClientSecretCredential(sub.TenantID, sub.ClientID, secret, nil)
 		if err != nil {
-			_ = db.FailAudit(ctx, pool, auditID, fmt.Sprintf("azure auth failed: %v", err))
+			failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("azure auth failed: %v", err))
 			return fmt.Errorf("azure auth failed: %w", err)
 		}
 		_ = db.TouchLastAudit(ctx, pool, subID)
@@ -120,7 +150,7 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	} else {
 		cred, err = azidentity.NewDefaultAzureCredential(nil)
 		if err != nil {
-			_ = db.FailAudit(ctx, pool, auditID, fmt.Sprintf("azure auth failed: %v", err))
+			failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("azure auth failed: %v", err))
 			return fmt.Errorf("azure auth failed: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Using credentials from environment variables\n")
@@ -186,18 +216,35 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 
+	// If every single extractor and the cost call failed, the audit
+	// collected nothing usable — treat that as a real failure instead of
+	// silently completing with an empty/garbage record. Usage is excluded
+	// from this count: ExtractUsage always returns a nil top-level error by
+	// design (a metrics glitch on one resource shouldn't fail the whole
+	// audit), so it can never appear in extractErrors and including it in
+	// the threshold would make this check unreachable.
+	totalChecks := total + 1
+	if len(extractErrors) >= totalChecks {
+		reason := fmt.Sprintf("all %d data checks failed: %s", totalChecks, strings.Join(extractErrors, "; "))
+		failAndAlert(ctx, pool, auditID, sub, reason)
+		return fmt.Errorf("all extractors and cost/usage failed for subscription %s", sub.SubscriptionName)
+	}
+
 	// --- Serialize and save ---
 	rawJSON, err := json.Marshal(rawData)
 	if err != nil {
-		_ = db.FailAudit(ctx, pool, auditID, fmt.Sprintf("json marshal failed: %v", err))
+		failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("json marshal failed: %v", err))
 		return fmt.Errorf("marshaling raw data: %w", err)
 	}
 	countsJSON, err := json.Marshal(resourceCounts)
 	if err != nil {
-		_ = db.FailAudit(ctx, pool, auditID, fmt.Sprintf("json marshal failed: %v", err))
+		failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("json marshal failed: %v", err))
 		return fmt.Errorf("marshaling resource counts: %w", err)
 	}
 	if err := db.CompleteAudit(ctx, pool, auditID, json.RawMessage(rawJSON), json.RawMessage(countsJSON)); err != nil {
+		// CompleteAudit failed, so the row is stuck at status="running" —
+		// mark it failed instead of leaving it stuck forever.
+		failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("completing audit failed: %v", err))
 		return fmt.Errorf("saving audit: %w", err)
 	}
 

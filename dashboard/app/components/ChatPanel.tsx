@@ -105,6 +105,7 @@ export function ChatPanel({ auditId, resourceCounts = {}, hasCost = false, usage
       setMessages(m => [...m, {
         id: `tmp-a-${m.length}`, audit_id: auditId, user_id: '',
         role: 'assistant', content: result.reply, created_at: '',
+        fallback_model: result.fallback_model,
       }])
       // First message of a fresh chat: the backend created the thread —
       // adopt it and refresh the list so its auto-title shows up.
@@ -293,6 +294,11 @@ export function ChatPanel({ auditId, resourceCounts = {}, hasCost = false, usage
                 }}
               >
                 {m.role === 'assistant' ? renderBold(m.content) : m.content}
+                {m.fallback_model && (
+                  <div style={{ marginTop: '0.4rem', fontSize: '0.68rem', color: 'var(--t4)' }}>
+                    Answered by {m.fallback_model} (your selected model was rate-limited)
+                  </div>
+                )}
               </div>
             ))}
 

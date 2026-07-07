@@ -91,7 +91,7 @@ export const api = {
   // the question) and returns its id alongside the reply.
   sendChat: (auditId: string, content: string, scope?: string, threadId?: string) => {
     const m = getModelChoice()
-    return apiFetch<{ reply: string; thread_id: string }>(`/api/audits/${auditId}/chat`, {
+    return apiFetch<{ reply: string; thread_id: string; fallback_model?: string }>(`/api/audits/${auditId}/chat`, {
       method: 'POST',
       body: JSON.stringify({ content, scope, thread_id: threadId, provider: m?.provider, model: m?.model }),
     })
@@ -123,4 +123,10 @@ export const api = {
 
   deleteUser: (id: string) =>
     apiFetch(`/api/users/${id}`, { method: 'DELETE' }),
+
+  listNotificationSettings: () =>
+    apiFetch<{ role: 'admin' | 'analyst' | 'viewer'; enabled: boolean; updated_at: string }[]>('/api/notification-settings'),
+
+  updateNotificationSetting: (role: string, enabled: boolean) =>
+    apiFetch(`/api/notification-settings/${role}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
 }
