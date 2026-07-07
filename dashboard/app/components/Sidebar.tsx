@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, FileSearch, DollarSign, Globe, Users, LogOut, Menu, X } from 'lucide-react'
+import { LayoutDashboard, FileSearch, DollarSign, Globe, Users, Bell, LogOut, Menu, X } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { Badge } from './Badge'
 import { roleConfig } from '../lib/utils'
@@ -16,6 +16,7 @@ const navItems = [
 const adminItems = [
   { label: 'Subscriptions', href: '/subscriptions', icon: Globe,           exact: false },
   { label: 'Users',         href: '/users',         icon: Users,           exact: false },
+  { label: 'Notifications', href: '/settings/notifications', icon: Bell,   exact: false },
 ]
 
 function isActive(href: string, pathname: string, exact: boolean) {
@@ -67,7 +68,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
           <div style={{
             width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-            background: 'linear-gradient(135deg, #60a5fa, #7c3aed)',
+            background: 'linear-gradient(135deg, #8B5CF6, #38BDF8)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '0.65rem', fontWeight: 700, color: '#fff',
           }}>

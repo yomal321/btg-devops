@@ -1,7 +1,7 @@
 import { findAuditById, updateClaudeAnalysis, findAnalysisById, findAuditCostUsageRaw, findAuditUsageRaw, findAuditCostRaw } from '../models/audit'
 import { insertFinding, findFindingsByAudit, deleteFindingsByScope, findPriorLiveFindings, deleteFindingsByIds, resolveFindingsByIds } from '../models/findings'
 import { ChatMessage, Finding } from '../types'
-import { callLLM, LLMProvider, LLMMessage } from './llm'
+import { callLLMWithFallback, LLMProvider, LLMMessage } from './llm'
 import { buildUsageGroups } from './usage'
 
 const DEFAULT_PROVIDER: LLMProvider = 'claude'
@@ -54,12 +54,12 @@ async function analyzeWithLLM(
   model: string
 ): Promise<{ analysis: ClaudeAnalysis } | { error: string; status: number }> {
   let text: string
+  let usedProvider = provider
+  let usedModel = model
   try {
-    text = await callLLM({
-      provider,
-      model,
-      maxTokens: 8000,
-      messages: [{
+    const result = await callLLMWithFallback(
+      { provider, model },
+      [{
         role: 'user',
         content: `Azure audit data (cleaned resource snapshot):
 ${JSON.stringify(data)}
@@ -81,7 +81,11 @@ Respond with ONLY a JSON object in this exact shape, no other text:
   ]
 }`,
       }],
-    })
+      8000
+    )
+    text = result.text
+    usedProvider = result.provider
+    usedModel = result.model
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'LLM call failed', status: 502 }
   }
@@ -100,7 +104,7 @@ Respond with ONLY a JSON object in this exact shape, no other text:
       summary: parsed.summary || '',
       findings: Array.isArray(parsed.findings) ? parsed.findings : [],
       generated_at: new Date().toISOString(),
-      model: `${provider}:${model}`,
+      model: `${usedProvider}:${usedModel}`,
     },
   }
 }
@@ -306,7 +310,7 @@ export async function runChat(
   provider: LLMProvider = DEFAULT_PROVIDER,
   model: string = DEFAULT_MODEL,
   scope?: string
-): Promise<{ reply?: string; error?: string; status: number }> {
+): Promise<{ reply?: string; error?: string; status: number; usedProvider?: LLMProvider; usedModel?: string; usedFallback?: boolean }> {
   const audit = await findAuditById(auditId)
   if (!audit) return { error: 'audit not found', status: 404 }
 
@@ -334,13 +338,19 @@ ${findings.length > 0 ? `Existing analysis findings:\n${JSON.stringify(findings)
     { role: 'user', content: question },
   ]
 
-  let reply: string
+  let result
   try {
-    reply = await callLLM({ provider, model, maxTokens: 4000, messages })
+    result = await callLLMWithFallback({ provider, model }, messages, 4000)
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'chat call failed', status: 502 }
   }
-  if (!reply) return { error: 'empty response from model', status: 502 }
+  if (!result.text) return { error: 'empty response from model', status: 502 }
 
-  return { reply, status: 200 }
+  return {
+    reply: result.text,
+    status: 200,
+    usedProvider: result.provider,
+    usedModel: result.model,
+    usedFallback: result.usedFallback,
+  }
 }

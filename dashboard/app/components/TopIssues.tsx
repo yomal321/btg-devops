@@ -12,7 +12,7 @@ import type { Finding } from '../types'
 const severityIcons = {
   Critical: <AlertCircle size={14} color="#ef4444" />,
   Warning:  <AlertTriangle size={14} color="#fbbf24" />,
-  Info:     <Info size={14} color="#60a5fa" />,
+  Info:     <Info size={14} color="#38bdf8" />,
 }
 
 export function TopIssues() {

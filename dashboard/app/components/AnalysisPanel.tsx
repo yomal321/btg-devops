@@ -53,13 +53,13 @@ function normalizeStore(raw: unknown): AnalysisStore {
 const severityIcons = {
   Critical: <AlertCircle size={15} color="#ef4444" />,
   Warning:  <AlertTriangle size={15} color="#fbbf24" />,
-  Info:     <Info size={15} color="#60a5fa" />,
+  Info:     <Info size={15} color="#38bdf8" />,
 }
 
 const severityTint = {
   Critical: { bg: 'rgba(239,68,68,0.08)',  border: 'rgba(239,68,68,0.35)',  color: '#ef4444' },
   Warning:  { bg: 'rgba(251,191,36,0.08)', border: 'rgba(251,191,36,0.35)', color: '#fbbf24' },
-  Info:     { bg: 'rgba(96,165,250,0.08)', border: 'rgba(96,165,250,0.35)', color: '#60a5fa' },
+  Info:     { bg: 'rgba(56,189,248,0.1)', border: 'rgba(56,189,248,0.35)', color: '#38bdf8' },
 }
 
 interface AnalysisPanelProps {

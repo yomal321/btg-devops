@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { DollarSign, ArrowRight } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { Header } from '../components/Header'
 import { KPICard } from '../components/KPICard'
 import { AnalysisPanel } from '../components/AnalysisPanel'
@@ -141,17 +141,9 @@ export default function CostUsagePage() {
             {hasCost && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <div className="glass" style={{ padding: '1.25rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                    <DollarSign size={15} color="var(--acc)" />
-                    <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Daily Cost Trend</h2>
-                  </div>
                   <CostTrendChart dailyCost={summary.daily_cost} currency={summary.currency} />
                 </div>
                 <div className="glass" style={{ padding: '1.25rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                    <DollarSign size={15} color="var(--acc)" />
-                    <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Top Services by Spend</h2>
-                  </div>
                   <TopServicesChart topServices={summary.top_services} currency={summary.currency} />
                 </div>
               </div>

@@ -59,6 +59,9 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   created_at: string
+  /** Transient UI-only field (not persisted): set when a 429/5xx forced a
+   *  fallback away from the requested model for this reply. */
+  fallback_model?: string
 }
 
 export interface ChatThread {

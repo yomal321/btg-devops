@@ -5,6 +5,7 @@ import {
 import { JWTPayload } from '../types'
 import { runChat } from '../utils/claude'
 import { LLMProvider } from '../utils/llm'
+import { catalogLabel } from '../../lib/modelCatalog'
 
 function coerceProvider(p?: string): LLMProvider | undefined {
   return p === 'claude' || p === 'gemini' || p === 'openrouter' ? p : undefined
@@ -50,7 +51,19 @@ export async function askChatController(
     }
     await insertMessage(auditId, thread.id, auth.user_id, 'assistant', result.reply)
     await touchThread(thread.id)
-    return { data: { reply: result.reply, thread_id: thread.id }, status: 200 }
+    return {
+      data: {
+        reply: result.reply,
+        thread_id: thread.id,
+        // Only set when a 429/5xx forced a switch away from the requested
+        // model, so the UI can surface it — silent model swaps would be
+        // confusing otherwise.
+        fallback_model: result.usedFallback && result.usedProvider && result.usedModel
+          ? catalogLabel(result.usedProvider, result.usedModel)
+          : undefined,
+      },
+      status: 200,
+    }
   } catch (e) {
     const message = e instanceof Error ? e.message : 'chat failed'
     return { error: message, status: 500 }

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowRight, Check, Boxes, CalendarClock, Globe2, TrendingUp, LayoutGrid, Activity, MapPinned, History } from 'lucide-react'
+import { ArrowRight, Check, Boxes, CalendarClock, Globe2, TrendingUp, LayoutGrid, Activity, MapPinned, History, PieChart } from 'lucide-react'
 import { Header } from './components/Header'
 import { KPICard } from './components/KPICard'
 import { SectionHeader } from './components/SectionHeader'
@@ -12,7 +12,7 @@ import { Badge } from './components/Badge'
 import { KPISkeletonRow, ChartSkeleton, TableSkeleton } from './components/Skeleton'
 import { TrendChart } from './components/TrendChart'
 import { TopIssues } from './components/TopIssues'
-import { RegionSection } from './components/RegionSection'
+import { useRegionSummary, RegionDistributionChart, CrossRegionCheck } from './components/RegionSection'
 import { api } from './lib/api'
 import { useAuth } from './lib/auth'
 import { formatNumber, shortId, statusConfig, triggerConfig } from './lib/utils'
@@ -50,6 +50,7 @@ export default function DashboardPage() {
 
   const latest = audits?.find(a => a.status === 'completed') || null
   const recent = audits?.slice(0, 5) || []
+  const { summary: regionSummary, error: regionError } = useRegionSummary(latest?.id)
 
   const now = new Date()
   const auditsThisMonth = audits?.filter(a => {
@@ -81,22 +82,22 @@ export default function DashboardPage() {
           style={{
             position: 'relative', overflow: 'hidden', borderRadius: 'var(--radius)',
             padding: '2rem 1.75rem', border: '1px solid var(--border-strong)',
-            background: 'linear-gradient(135deg, #1a2340 0%, #171d33 40%, var(--card) 100%)',
+            background: 'linear-gradient(135deg, #2d2350 0%, #241f3d 40%, var(--card) 100%)',
             boxShadow: 'var(--shadow-card)',
           }}
         >
           {/* layered color-mesh blobs — the "aurora" backdrop */}
           <div style={{
             position: 'absolute', top: '-45%', right: '-6%', width: 320, height: 320, borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(96,165,250,0.35) 0%, transparent 70%)', pointerEvents: 'none', filter: 'blur(2px)',
+            background: 'radial-gradient(circle, rgba(139,92,246,0.4) 0%, transparent 70%)', pointerEvents: 'none', filter: 'blur(2px)',
           }} />
           <div style={{
             position: 'absolute', bottom: '-55%', left: '18%', width: 280, height: 280, borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(168,133,233,0.28) 0%, transparent 70%)', pointerEvents: 'none',
+            background: 'radial-gradient(circle, rgba(56,189,248,0.28) 0%, transparent 70%)', pointerEvents: 'none',
           }} />
           <div style={{
             position: 'absolute', top: '-20%', left: '55%', width: 200, height: 200, borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(25,158,112,0.22) 0%, transparent 70%)', pointerEvents: 'none',
+            background: 'radial-gradient(circle, rgba(168,85,247,0.22) 0%, transparent 70%)', pointerEvents: 'none',
           }} />
           <p style={{ fontSize: '1.3rem', fontWeight: 800, color: '#f8fafc', position: 'relative', letterSpacing: '-0.01em' }}>
             {greeting}{firstName ? `, ${firstName}` : ''}
@@ -188,11 +189,16 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Performance — trends + resource breakdown */}
-                <div>
+                {/* Performance — trends over time */}
+                <div className="cv-auto">
                   <SectionHeader icon={Activity} title="Performance" caption="How your resource footprint is trending" />
+                  <TrendChart audits={audits || []} />
+                </div>
+
+                {/* Breakdown — resource type + region distribution, side by side */}
+                <div className="cv-auto">
+                  <SectionHeader icon={PieChart} title="Breakdown" caption="Where your resources are, by type and by region" />
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-                    <TrendChart audits={audits || []} />
                     <div className="glass animate-fade-in" style={{ padding: '1.125rem' }}>
                       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                         <h3 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--t1)' }}>Resource Breakdown</h3>
@@ -202,13 +208,20 @@ export default function DashboardPage() {
                       </div>
                       <ResourceChart counts={latest.resource_counts || {}} />
                     </div>
+                    <div className="glass animate-fade-in" style={{ padding: '1.125rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                        <MapPinned size={14} color="var(--acc)" />
+                        <h3 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--t1)' }}>Region Distribution</h3>
+                      </div>
+                      <RegionDistributionChart summary={regionSummary} error={regionError} />
+                    </div>
                   </div>
                 </div>
 
-                {/* Regional Insights — distribution + cross-region compute/data check */}
-                <div>
-                  <SectionHeader icon={MapPinned} title="Regional Insights" caption="Where resources live, and where compute is isolated from data" />
-                  <RegionSection auditId={latest.id} />
+                {/* Regional Insights — cross-region compute/data check */}
+                <div className="cv-auto">
+                  <SectionHeader icon={MapPinned} title="Regional Insights" caption="Where compute is isolated from data" />
+                  <CrossRegionCheck summary={regionSummary} error={regionError} />
                 </div>
               </>
             ) : (
@@ -223,10 +236,10 @@ export default function DashboardPage() {
             )}
 
             {/* Top issues digest */}
-            <TopIssues />
+            <div className="cv-auto"><TopIssues /></div>
 
             {/* Recent audits */}
-            <div>
+            <div className="cv-auto">
               <SectionHeader
                 icon={History}
                 title="Recent Activity"

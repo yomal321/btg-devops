@@ -1,25 +1,34 @@
 @import "tailwindcss";
 
 /* ── design tokens ─────────────────────────────────────────── */
+/* Premium dark-mode fintech palette — purple/violet/indigo/cyan on a deep
+   purple base (#1B1830), per the design brief. Nearly every component reads
+   these variables rather than hardcoded colors, so this cascades app-wide. */
 :root {
-  --sidebar-bg: #07090f;
-  --bg: #0c1017;
-  --card: #141a25;
-  --card-hover: #1a2235;
-  --hover: rgba(255, 255, 255, 0.04);
-  --input-bg: rgba(255, 255, 255, 0.03);
-  --border: rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.1);
-  --radius: 16px;
-  --shadow-card: 0 8px 24px -12px rgba(0, 0, 0, 0.45);
-  --t1: #e2e8f0;
-  --t2: #94a3b8;
-  --t3: #64748b;
-  --t4: #475569;
-  --acc: #60a5fa;
-  --acc-soft: rgba(96, 165, 250, 0.08);
-  --panel: #111827;
+  --sidebar-bg: #161329;
+  --bg: #1b1830;
+  --card: #2a243f;
+  --card-hover: #332c4d;
+  --hover: rgba(255, 255, 255, 0.05);
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --radius: 20px;
+  --shadow-card: 0 6px 20px -10px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 32px rgba(139, 92, 246, 0.22);
+  --t1: #ffffff;
+  --t2: #9ca3af;
+  --t3: #7c7a94;
+  --t4: #5b5875;
+  --acc: #8b5cf6;
+  --acc-2: #a855f7;
+  --cyan: #38bdf8;
+  --acc-soft: rgba(139, 92, 246, 0.14);
+  --panel: #241f38;
   --chart-grid: rgba(255, 255, 255, 0.05);
+  --good: #10b981;
+  --warn: #f59e0b;
+  --bad: #ef4444;
 }
 
 html.light {
@@ -35,11 +44,17 @@ html.light {
   --t2: #64748b;
   --t3: #94a3b8;
   --t4: #b2bdcc;
-  --acc: #2563eb;
-  --acc-soft: rgba(37, 99, 235, 0.08);
+  --acc: #7c3aed;
+  --acc-2: #a855f7;
+  --cyan: #0ea5e9;
+  --acc-soft: rgba(124, 58, 237, 0.08);
   --panel: #ffffff;
   --chart-grid: rgba(15, 23, 42, 0.06);
   --shadow-card: 0 8px 24px -14px rgba(15, 23, 42, 0.18);
+  --shadow-glow: 0 0 24px rgba(124, 58, 237, 0.12);
+  --good: #10b981;
+  --warn: #f59e0b;
+  --bad: #ef4444;
 }
 
 /* ── Tailwind theme extension (Tailwind v4) ─────────────────── */
@@ -57,7 +72,7 @@ html.light {
   body {
     background: var(--bg);
     color: var(--t1);
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -74,7 +89,6 @@ html.light {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    backdrop-filter: blur(8px);
     box-shadow: var(--shadow-card);
   }
 
@@ -104,17 +118,17 @@ html.light {
   select option:disabled { color: var(--t4); }
 
   .btn-primary {
-    background: var(--acc);
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-2) 100%);
     color: #ffffff;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 0.625rem 1.25rem;
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s, box-shadow 0.15s, transform 0.15s;
   }
-  .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+  .btn-primary:hover:not(:disabled) { opacity: 0.92; box-shadow: 0 0 20px rgba(139, 92, 246, 0.35); transform: translateY(-1px); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .btn-ghost {
@@ -153,13 +167,27 @@ html.light {
     font-weight: 500;
     white-space: nowrap;
   }
-  .bdg-info    { background: rgba(96, 165, 250, 0.12); color: #60a5fa; }
-  .bdg-success { background: rgba(34, 197, 94, 0.12);  color: #22c55e; }
-  .bdg-warning { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
-  .bdg-error   { background: rgba(239, 68, 68, 0.12);  color: #ef4444; }
-  .bdg-primary { background: rgba(96, 165, 250, 0.12); color: #60a5fa; }
-  .bdg-purple  { background: rgba(168, 85, 247, 0.12); color: #a855f7; }
-  .bdg-muted   { background: rgba(100, 116, 139, 0.12); color: #64748b; }
+  .bdg-info    { background: rgba(56, 189, 248, 0.14);  color: var(--cyan); }
+  .bdg-success { background: rgba(16, 185, 129, 0.14);  color: var(--good); }
+  .bdg-warning { background: rgba(245, 158, 11, 0.14);  color: var(--warn); }
+  .bdg-error   { background: rgba(239, 68, 68, 0.14);   color: var(--bad); }
+  .bdg-primary { background: var(--acc-soft);           color: var(--acc); }
+  .bdg-purple  { background: rgba(168, 85, 247, 0.14);  color: var(--acc-2); }
+  .bdg-muted   { background: rgba(156, 163, 175, 0.14); color: var(--t2); }
+
+  /* Skips layout/paint for sections until they're near the viewport —
+     meaningfully cheaper scrolling on long, chart-heavy pages. */
+  .cv-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 420px;
+  }
+
+  /* Scrollable but no visible scrollbar track (legend lists, mismatch panels). */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
 
   .row-hover { transition: background 0.12s; }
   .row-hover:hover { background: var(--hover); }
@@ -189,13 +217,41 @@ html.light {
     animation: shimmer 1.4s ease-in-out infinite;
   }
 
-  .glass-hover { transition: transform 0.15s ease, border-color 0.15s ease; }
+  .glass-hover { transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease; }
   .glass-hover:hover {
-    transform: translateY(-1px);
+    transform: translateY(-2px) scale(1.006);
     border-color: var(--border-strong);
+    box-shadow: var(--shadow-glow), var(--shadow-card);
   }
 
   .row-hover:hover td:first-child { box-shadow: inset 2px 0 0 var(--acc); }
+
+  /* ── chart chrome: range filter pills + glowing active-dot ripple ── */
+  .chart-range-btn {
+    background: transparent;
+    border: none;
+    color: var(--t3);
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 0.24rem 0.6rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .chart-range-btn:hover { color: var(--t1); }
+  .chart-range-btn[data-active="true"] {
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-2) 100%);
+    color: #ffffff;
+  }
+
+  @keyframes chartRipple {
+    0%   { transform: scale(0.5); opacity: 0.55; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+  .chart-ripple {
+    animation: chartRipple 1.5s ease-out infinite;
+    transform-box: fill-box;
+  }
 
   .stagger > * { animation: fadeIn 0.2s ease-out both; }
   .stagger > *:nth-child(1) { animation-delay: 0ms; }
