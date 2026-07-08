@@ -85,6 +85,22 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ;
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS resolved_at   TIMESTAMPTZ;
 UPDATE findings SET first_seen_at = created_at WHERE first_seen_at IS NULL;
 
+-- analysis_requests is the queue behind the MCP-server/Claude-Code-orchestrator
+-- flow (spec 8): the dashboard writes a pending row instead of calling an LLM
+-- API directly, a scheduled Claude Code agent claims it via the MCP server,
+-- and writes the result back through the existing updateClaudeAnalysis() /
+-- saveFindings() functions unchanged. scope matches findings.scope's values
+-- (a resource type, "cost", "usage:<type>", or "all").
+CREATE TABLE IF NOT EXISTS analysis_requests (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  audit_id      UUID NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+  scope         TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'failed')),
+  error_message TEXT,
+  requested_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at  TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   audit_id   UUID NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
@@ -164,6 +180,8 @@ INSERT INTO notification_role_settings (role, enabled) VALUES
 ON CONFLICT (role) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_findings_audit_id            ON findings(audit_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_requests_status     ON analysis_requests(status);
+CREATE INDEX IF NOT EXISTS idx_analysis_requests_audit_id   ON analysis_requests(audit_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_audit_id       ON chat_messages(audit_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash     ON user_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_audits_created_at            ON audits(created_at DESC);

@@ -7,7 +7,7 @@ import { buildUsageGroups } from './usage'
 const DEFAULT_PROVIDER: LLMProvider = 'claude'
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
-interface AnalysisFinding {
+export interface AnalysisFinding {
   severity: 'Critical' | 'Warning' | 'Info'
   category: string
   resource_type: string
@@ -28,6 +28,13 @@ export interface ClaudeAnalysis {
 export interface ClaudeAnalysisStore {
   all?: ClaudeAnalysis
   by_resource?: Record<string, ClaudeAnalysis>
+}
+
+// Reads back whatever analysis is currently saved for a scope — used by the
+// analysis-request poll endpoint once a request's status flips to 'done'.
+export async function getAnalysisForScope(auditId: string, scope: string): Promise<ClaudeAnalysis | undefined> {
+  const store = normalizeStore(await findAnalysisById(auditId))
+  return scope === 'all' ? store.all : store.by_resource?.[scope]
 }
 
 function normalizeStore(raw: unknown): ClaudeAnalysisStore {
@@ -172,12 +179,90 @@ async function saveFindings(auditId: string, findings: AnalysisFinding[], scope:
   await resolveFindingsByIds(disappeared)
 }
 
+export interface ScopedAuditData {
+  data: unknown
+  instruction: string
+}
+
+// Resolves what to send an LLM (or the MCP-server-driven Claude Code agent —
+// see spec 8) for a given scope, and the instruction to send alongside it.
+// Pulled out of runAnalysis so the same scoping rules serve both the
+// synchronous in-request LLM path AND the async MCP-server orchestrator
+// path, without duplicating (and risking drift on) which DB column/branch
+// each scope reads from.
+export async function getScopedAuditData(auditId: string, scope: string): Promise<ScopedAuditData | { error: string; status: number }> {
+  const audit = await findAuditById(auditId)
+  if (!audit) return { error: 'audit not found', status: 404 }
+
+  if (scope === 'all') {
+    if (!audit.raw_data || Object.keys(audit.raw_data).length === 0) {
+      return { error: 'audit has no resource data to analyze', status: 400 }
+    }
+    // "Analyze All" sends the complete picture — cost/usage are merged back
+    // in here even though they're stored in their own DB columns, so the
+    // full-subscription analysis doesn't lose visibility into spend and
+    // utilization data.
+    const costUsage = await findAuditCostUsageRaw(auditId)
+    const fullData = {
+      ...audit.raw_data,
+      ...(costUsage?.cost ? { cost: costUsage.cost } : {}),
+      ...(costUsage?.usage ? { usage: costUsage.usage } : {}),
+    }
+    return {
+      data: fullData,
+      instruction: 'Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).',
+    }
+  }
+
+  // cost/usage live in their own DB columns, not raw_data — see
+  // findAuditCostRaw/findAuditUsageRaw's doc comments for why they're kept
+  // separate. "usage:<type>" analyzes one resource type's utilization only
+  // (e.g. "usage:storage"), matching the same per-type split used by the
+  // Resource Utilization dropdown and the scope selectors in the UI.
+  let resourceData: unknown
+  let instruction: string
+  if (scope === 'cost') {
+    resourceData = (await findAuditCostRaw(auditId))?.cost
+    instruction = 'Analyze the Cost Management data for this Azure subscription as a senior DevOps engineer would. Find cost waste, unexpected spend spikes, and opportunities to reduce spend.'
+  } else if (scope.startsWith('usage:')) {
+    const usageType = scope.slice('usage:'.length)
+    const usageRaw = await findAuditUsageRaw(auditId)
+    const groups = buildUsageGroups(usageRaw?.metrics || [], usageType)
+    resourceData = groups.length > 0 ? { type: usageType, groups } : undefined
+    instruction = `Analyze the utilization metrics for "${usageType}" resources in this Azure subscription as a senior DevOps engineer would. Find idle, over-provisioned, or under-utilized resources.`
+  } else if (scope === 'usage') {
+    resourceData = (await findAuditCostUsageRaw(auditId))?.usage // legacy combined scope, kept for old cache entries only
+    instruction = 'Analyze the Azure Monitor usage data for this subscription as a senior DevOps engineer would. Find idle, over-provisioned, or under-utilized resources.'
+  } else {
+    resourceData = (audit.raw_data as Record<string, unknown> | undefined)?.[scope]
+    instruction = `Analyze the "${scope}" resources in this Azure subscription as a senior DevOps engineer would. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues specific to this resource type.`
+  }
+  if (resourceData === undefined || resourceData === null) {
+    return { error: `no data for resource type "${scope}" in this audit`, status: 400 }
+  }
+  return { data: { [scope]: resourceData }, instruction }
+}
+
+// Persists a finished analysis for a scope — merges it into the cached
+// claude_analysis store and runs the findings lifecycle. Shared by the
+// synchronous LLM path (runAnalysis) and the MCP server's save_analysis
+// tool (spec 8), so both write results identically.
+export async function saveAnalysisResult(auditId: string, scope: string, analysis: ClaudeAnalysis): Promise<void> {
+  const existing = normalizeStore(await findAnalysisById(auditId))
+  const merged: ClaudeAnalysisStore = scope === 'all'
+    ? { ...existing, all: analysis }
+    : { ...existing, by_resource: { ...(existing.by_resource || {}), [scope]: analysis } }
+  await updateClaudeAnalysis(auditId, merged)
+  await saveFindings(auditId, analysis.findings, scope)
+}
+
 /**
- * Analyzes one audit with Claude. By default (no resourceSlug) this only
- * scopes to a single resource type — cheap and fast. Pass resourceSlug
- * omitted and scope "all" explicitly from the caller to analyze the entire
- * audit (all resource types) in one request — slower and more expensive,
- * so the frontend gates that behind a confirmation dialog.
+ * Analyzes one audit with an LLM called directly from this request. By
+ * default (no resourceSlug) this only scopes to a single resource type —
+ * cheap and fast. Pass resourceSlug omitted and scope "all" explicitly from
+ * the caller to analyze the entire audit (all resource types) in one
+ * request — slower and more expensive, so the frontend gates that behind a
+ * confirmation dialog.
  */
 export async function runAnalysis(
   auditId: string,
@@ -185,87 +270,18 @@ export async function runAnalysis(
   provider: LLMProvider = DEFAULT_PROVIDER,
   model: string = DEFAULT_MODEL
 ): Promise<{ analysis?: ClaudeAnalysis; error?: string; status: number; cached?: boolean }> {
-  const audit = await findAuditById(auditId)
-  if (!audit) return { error: 'audit not found', status: 404 }
-
+  const scope = resourceSlug || 'all'
   const existing = normalizeStore(await findAnalysisById(auditId))
+  const cached = scope === 'all' ? existing.all : existing.by_resource?.[scope]
+  if (cached) return { analysis: cached, status: 200, cached: true }
 
-  if (resourceSlug) {
-    const cached = existing.by_resource?.[resourceSlug]
-    if (cached) return { analysis: cached, status: 200, cached: true }
+  const scoped = await getScopedAuditData(auditId, scope)
+  if ('error' in scoped) return scoped
 
-    // cost/usage live in their own DB columns, not raw_data — see
-    // findAuditCostRaw/findAuditUsageRaw's doc comments for why they're kept
-    // separate. "usage:<type>" analyzes one resource type's utilization only
-    // (e.g. "usage:storage"), matching the same per-type split used by the
-    // Resource Utilization dropdown and the scope selectors in the UI.
-    let resourceData: unknown
-    let instruction: string
-    if (resourceSlug === 'cost') {
-      resourceData = (await findAuditCostRaw(auditId))?.cost
-      instruction = 'Analyze the Cost Management data for this Azure subscription as a senior DevOps engineer would. Find cost waste, unexpected spend spikes, and opportunities to reduce spend.'
-    } else if (resourceSlug.startsWith('usage:')) {
-      const usageType = resourceSlug.slice('usage:'.length)
-      const usageRaw = await findAuditUsageRaw(auditId)
-      const groups = buildUsageGroups(usageRaw?.metrics || [], usageType)
-      resourceData = groups.length > 0 ? { type: usageType, groups } : undefined
-      instruction = `Analyze the utilization metrics for "${usageType}" resources in this Azure subscription as a senior DevOps engineer would. Find idle, over-provisioned, or under-utilized resources.`
-    } else if (resourceSlug === 'usage') {
-      resourceData = (await findAuditCostUsageRaw(auditId))?.usage // legacy combined scope, kept for old cache entries only
-      instruction = 'Analyze the Azure Monitor usage data for this subscription as a senior DevOps engineer would. Find idle, over-provisioned, or under-utilized resources.'
-    } else {
-      resourceData = (audit.raw_data as Record<string, unknown> | undefined)?.[resourceSlug]
-      instruction = `Analyze the "${resourceSlug}" resources in this Azure subscription as a senior DevOps engineer would. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues specific to this resource type.`
-    }
-    if (resourceData === undefined || resourceData === null) {
-      return { error: `no data for resource type "${resourceSlug}" in this audit`, status: 400 }
-    }
-
-    const result = await analyzeWithLLM(
-      { [resourceSlug]: resourceData },
-      instruction,
-      provider,
-      model
-    )
-    if ('error' in result) return result
-
-    const merged: ClaudeAnalysisStore = {
-      ...existing,
-      by_resource: { ...(existing.by_resource || {}), [resourceSlug]: result.analysis },
-    }
-    await updateClaudeAnalysis(auditId, merged)
-    await saveFindings(auditId, result.analysis.findings, resourceSlug)
-    return { analysis: result.analysis, status: 200, cached: false }
-  }
-
-  if (existing.all) return { analysis: existing.all, status: 200, cached: true }
-
-  if (!audit.raw_data || Object.keys(audit.raw_data).length === 0) {
-    return { error: 'audit has no resource data to analyze', status: 400 }
-  }
-
-  // "Analyze All" sends the complete picture to Claude — cost/usage are
-  // merged back in here even though they're stored in their own DB columns,
-  // so the full-subscription analysis doesn't lose visibility into spend
-  // and utilization data.
-  const costUsage = await findAuditCostUsageRaw(auditId)
-  const fullData = {
-    ...audit.raw_data,
-    ...(costUsage?.cost ? { cost: costUsage.cost } : {}),
-    ...(costUsage?.usage ? { usage: costUsage.usage } : {}),
-  }
-
-  const result = await analyzeWithLLM(
-    fullData,
-    'Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).',
-    provider,
-    model
-  )
+  const result = await analyzeWithLLM(scoped.data, scoped.instruction, provider, model)
   if ('error' in result) return result
 
-  const merged: ClaudeAnalysisStore = { ...existing, all: result.analysis }
-  await updateClaudeAnalysis(auditId, merged)
-  await saveFindings(auditId, result.analysis.findings, 'all')
+  await saveAnalysisResult(auditId, scope, result.analysis)
   return { analysis: result.analysis, status: 200, cached: false }
 }
 

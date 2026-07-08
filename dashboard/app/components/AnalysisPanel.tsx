@@ -1,12 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw } from 'lucide-react'
 import { Badge } from './Badge'
 import { Modal } from './Modal'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
-import { useModel, ModelPicker, MODEL_CATALOG } from '../lib/model'
 import { buildScopeGroups, scopeLabel, firstScope, UsageTypeInfo } from '../lib/scopes'
 import { severityConfig, findingStatusConfig, findingAge } from '../lib/utils'
 import type { Finding } from '../types'
@@ -41,6 +40,11 @@ export interface AnalysisStore {
 }
 
 const ALL_SCOPE = 'all'
+const POLL_INTERVAL_MS = 7000
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 function normalizeStore(raw: unknown): AnalysisStore {
   if (!raw || typeof raw !== 'object') return {}
@@ -74,9 +78,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   const { user } = useAuth()
   const canAnalyze = user?.role === 'admin' || user?.role === 'analyst'
 
-  const { choice } = useModel()
-  const modelLabel = MODEL_CATALOG.find(m => m.provider === choice.provider && m.model === choice.model)?.label || choice.model
-
   const resourceTypes = useMemo(() => Object.keys(resourceCounts || {}).sort(), [resourceCounts])
   const scopeGroups = useMemo(
     () => buildScopeGroups(resourceCounts, hasCost, usageTypes),
@@ -98,6 +99,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   // with the scope they were fetched for so a stale response can't render
   // under a different scope.
   const [dbFindings, setDbFindings] = useState<{ scope: string; rows: Finding[] } | null>(null)
+  const pollCancelRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!currentAnalysis) return
@@ -108,23 +110,44 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
     return () => { cancelled = true }
   }, [auditId, scope, currentAnalysis])
 
+  // Stops an in-flight poll loop if the panel unmounts (e.g. navigating away
+  // mid-analysis) so it doesn't keep calling setState after the fact.
+  useEffect(() => () => pollCancelRef.current?.(), [])
+
+  // Analyze now queues a request for the scheduled Claude Code agent (spec 8)
+  // instead of calling an LLM directly from this request, and polls until
+  // the agent (via the MCP server) writes a result back. cancelledRef lets
+  // an in-flight poll loop stop itself if the component unmounts mid-poll.
   async function analyzeScope(slug: string) {
     setRunning(true)
     setError('')
+    let cancelled = false
+    const stop = () => { cancelled = true }
+    pollCancelRef.current = stop
     try {
-      const result = await api.analyzeAudit(auditId, slug === ALL_SCOPE ? undefined : slug)
-      const analysis = result.analysis as unknown as Analysis
-      setStore(s =>
-        slug === ALL_SCOPE
-          ? { ...s, all: analysis }
-          : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
-      )
-      // Findings were just (re)written server-side — refresh the DB copies.
-      api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
+      const { requestId, status } = await api.requestAnalysis(auditId, slug)
+      let current = status
+      while (current === 'pending' && !cancelled) {
+        await sleep(POLL_INTERVAL_MS)
+        if (cancelled) break
+        const poll = await api.getAnalysisRequest(auditId, requestId)
+        current = poll.status
+        if (current === 'done' && poll.analysis) {
+          const analysis = poll.analysis as unknown as Analysis
+          setStore(s =>
+            slug === ALL_SCOPE
+              ? { ...s, all: analysis }
+              : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
+          )
+          api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
+        } else if (current === 'failed') {
+          setError(poll.error_message || 'Analysis failed')
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed')
     } finally {
-      setRunning(false)
+      if (!cancelled) setRunning(false)
     }
   }
 
@@ -188,9 +211,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         {currentAnalysis && (
           <Badge color="success" label={`Cached · ${scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)} · ${new Date(currentAnalysis.generated_at).toLocaleDateString()}`} />
         )}
-        <div style={{ marginLeft: 'auto' }}>
-          <ModelPicker />
-        </div>
       </div>
 
       {/* scope selector — always visible so viewers can browse cached results too */}
@@ -231,13 +251,13 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
           <p style={{ fontSize: '0.85rem', color: 'var(--t2)', marginBottom: '1rem' }}>
             {scope === ALL_SCOPE
-              ? `Send the full audit (all resource types) to ${modelLabel} in one request.`
+              ? 'Queue the full audit (all resource types) for analysis in one request.'
               : resourceTypes.includes(scope)
-              ? `Send only the "${scope}" resources to ${modelLabel} for a focused, fast analysis.`
-              : `Send the ${scopeLabel(scope, scopeGroups)} to ${modelLabel} for a focused analysis.`}
+              ? `Queue only the "${scope}" resources for a focused analysis.`
+              : `Queue the ${scopeLabel(scope, scopeGroups)} for a focused analysis.`}
           </p>
           {error && <p style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '0.75rem' }}>{error}</p>}
-          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze with {modelLabel}</button>
+          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze</button>
         </div>
       )}
 
@@ -250,10 +270,10 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             borderRadius: '50%', animation: 'spin 0.8s linear infinite',
           }} />
           <p style={{ fontSize: '0.82rem', color: 'var(--t2)' }}>
-            {scope === ALL_SCOPE ? 'Sending the full audit for analysis…' : `Analyzing ${scopeLabel(scope, scopeGroups)}…`}
+            {scope === ALL_SCOPE ? 'Full audit queued for analysis…' : `${scopeLabel(scope, scopeGroups)} queued for analysis…`}
           </p>
           <p style={{ fontSize: '0.72rem', color: 'var(--t4)', marginTop: '0.25rem' }}>
-            {scope === ALL_SCOPE ? 'This can take a minute or more.' : 'This should only take a few seconds.'}
+            A scheduled agent picks this up shortly — usually ready within a few minutes.
           </p>
         </div>
       )}
@@ -390,8 +410,8 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             }}>
               <TriangleAlert size={17} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
               <p style={{ fontSize: '0.82rem', color: 'var(--t2)', lineHeight: 1.55 }}>
-                This sends the complete audit dataset — all {resourceTypes.length} resource types — to {modelLabel} in a single request.
-                It is slower and uses significantly more tokens than analyzing one resource type at a time.
+                This queues the complete audit dataset — all {resourceTypes.length} resource types — as a single analysis request.
+                It takes longer for the agent to work through than analyzing one resource type at a time.
               </p>
             </div>
             {error && <p style={{ color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>}

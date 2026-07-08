@@ -66,6 +66,22 @@ export const api = {
     )
   },
 
+  // Queues an analysis run for the scheduled Claude Code agent to pick up
+  // (spec 8) instead of calling an LLM directly from this request.
+  requestAnalysis: (auditId: string, scope: string) =>
+    apiFetch<{ requestId: string; status: 'pending' | 'done' | 'failed' }>(
+      `/api/audits/${auditId}/analysis-request`,
+      { method: 'POST', body: JSON.stringify({ scope }) }
+    ),
+
+  getAnalysisRequest: (auditId: string, requestId: string) =>
+    apiFetch<{
+      requestId: string
+      status: 'pending' | 'done' | 'failed'
+      error_message?: string | null
+      analysis?: Record<string, unknown>
+    }>(`/api/audits/${auditId}/analysis-request/${requestId}`),
+
   listFindings: (auditId: string, scope?: string) =>
     apiFetch<import('../types').Finding[]>(`/api/audits/${auditId}/findings${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`),
 

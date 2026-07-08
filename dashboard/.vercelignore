@@ -1,0 +1,5 @@
+# mcp-server is a separate always-on process (Fly.io), not part of the
+# Next.js app — see mcp-server/index.ts for why it's not an API route.
+mcp-server/
+Dockerfile
+fly.toml
