@@ -92,20 +92,21 @@ export interface AnalysisProgress {
   done: number
   pending: number
   failed: number
+  scopes: { scope: string; status: 'pending' | 'done' | 'failed' }[]
 }
 
 // Backs the dashboard's live "N of M resource types analyzed" progress bar
-// for one audit — the request-per-resource-type rows already exist (queued
-// by collect.go or a manual Analyze click), this just summarizes them.
+// AND its per-resource-type checklist for one audit — the request-per-scope
+// rows already exist (queued by collect.go or a manual Analyze click), this
+// just summarizes and lists them.
 export async function findAnalysisProgressForAudit(auditId: string): Promise<AnalysisProgress> {
   const { rows } = await pool.query(
-    `SELECT status, COUNT(*)::int AS count FROM analysis_requests WHERE audit_id = $1 GROUP BY status`,
+    `SELECT scope, status FROM analysis_requests WHERE audit_id = $1 ORDER BY requested_at ASC`,
     [auditId]
   )
-  const progress: AnalysisProgress = { total: 0, done: 0, pending: 0, failed: 0 }
+  const progress: AnalysisProgress = { total: rows.length, done: 0, pending: 0, failed: 0, scopes: rows }
   for (const row of rows) {
-    progress[row.status as 'done' | 'pending' | 'failed'] = row.count
-    progress.total += row.count
+    progress[row.status as 'done' | 'pending' | 'failed']++
   }
   return progress
 }

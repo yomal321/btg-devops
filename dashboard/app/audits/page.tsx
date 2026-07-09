@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, ChevronRight, Check, ArrowLeftRight, Play, Loader2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Check, ArrowLeftRight, Play, Loader2, X, Circle } from 'lucide-react'
 import { Header } from '../components/Header'
 import { Badge } from '../components/Badge'
 import { TableSkeleton } from '../components/Skeleton'
@@ -17,6 +17,67 @@ import type { Audit } from '../types'
 // takes a few minutes; this is a generous upper bound, not an expected time.
 const RUN_AUDIT_POLL_MS = 5000
 const RUN_AUDIT_TIMEOUT_MS = 10 * 60 * 1000
+
+// Mirrors the exact order collect.go runs extractors + cost + usage in
+// (cmd/collect.go's allExtractors slice, then cost, then usage) — current_step
+// values like "extracting acr (4/14)" are parsed against this list to render
+// a live checklist instead of just the raw string.
+const COLLECTION_STEPS: { key: string; label: string }[] = [
+  { key: 'storage', label: 'Storage Accounts' },
+  { key: 'iam', label: 'IAM Role Assignments' },
+  { key: 'nsg', label: 'Network Security Groups' },
+  { key: 'acr', label: 'Container Registries' },
+  { key: 'cosmosdb', label: 'Cosmos DB' },
+  { key: 'keyvault', label: 'Key Vaults' },
+  { key: 'functions', label: 'Function Apps' },
+  { key: 'appservice', label: 'App Services' },
+  { key: 'appserviceplan', label: 'App Service Plans' },
+  { key: 'publicip', label: 'Public IP Addresses' },
+  { key: 'cognitiveservices', label: 'Cognitive Services' },
+  { key: 'resourcegroup', label: 'Resource Groups' },
+  { key: 'cost', label: 'Cost Management' },
+  { key: 'usage', label: 'Azure Monitor Usage' },
+]
+
+// Parses "extracting acr (4/14)" -> 4. Returns 0 (nothing done yet) if the
+// step string doesn't match, e.g. right when the audit row is first created.
+function parseStepIndex(step: string | null): number {
+  if (!step) return 0
+  const m = step.match(/\((\d+)\/(\d+)\)/)
+  return m ? parseInt(m[1], 10) : 0
+}
+
+type StepStatus = 'done' | 'active' | 'pending' | 'failed'
+
+function StepIcon({ status }: { status: StepStatus }) {
+  if (status === 'done') return <Check size={13} style={{ color: '#22c55e' }} />
+  if (status === 'failed') return <X size={13} style={{ color: '#ef4444' }} />
+  if (status === 'active') return <Loader2 size={13} style={{ color: 'var(--acc)', animation: 'spin 0.8s linear infinite' }} />
+  return <Circle size={8} style={{ color: 'var(--t4)' }} />
+}
+
+function StepRow({ label, status }: { label: string; status: StepStatus }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.25rem 0' }}>
+      <div style={{ width: 14, display: 'flex', justifyContent: 'center' }}><StepIcon status={status} /></div>
+      <span style={{
+        fontSize: '0.78rem',
+        color: status === 'done' ? 'var(--t2)' : status === 'active' ? 'var(--t1)' : status === 'failed' ? '#ef4444' : 'var(--t4)',
+        fontWeight: status === 'active' ? 600 : 400,
+      }}>
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function ProgressBar({ pct }: { pct: number }) {
+  return (
+    <div style={{ height: 5, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+      <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, pct))}%`, background: 'var(--acc)', transition: 'width 0.4s ease' }} />
+    </div>
+  )
+}
 
 const PAGE_SIZE = 10
 
@@ -44,7 +105,7 @@ export default function AuditsPage() {
   const [runState, setRunState] = useState<RunState>('idle')
   const [runError, setRunError] = useState('')
   const [currentStep, setCurrentStep] = useState<string | null>(null)
-  const [analysisProgress, setAnalysisProgress] = useState<{ total: number; done: number; failed: number } | null>(null)
+  const [analysisProgress, setAnalysisProgress] = useState<Awaited<ReturnType<typeof api.getAnalysisProgress>> | null>(null)
   const triggeredAtRef = useRef<string | null>(null)
   const runningAuditIdRef = useRef<string | null>(null)
 
@@ -212,40 +273,92 @@ export default function AuditsPage() {
           </div>
         </div>
 
-        {runState !== 'idle' && (
-          <div className="glass" style={{
-            padding: '0.75rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.625rem',
-            fontSize: '0.82rem',
-            color: runState === 'failed' || runState === 'error' ? '#ef4444' : runState === 'done' ? '#22c55e' : 'var(--t2)',
-          }}>
-            {(runState === 'starting' || runState === 'waiting' || runState === 'analyzing') &&
-              <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} />}
-            {runState === 'starting' && 'Starting audit…'}
-            {runState === 'waiting' && (currentStep ? `Running — ${currentStep}…` : 'Audit starting…')}
-            {runState === 'analyzing' && (
-              analysisProgress
-                ? `Audit complete — analyzing: ${analysisProgress.done + analysisProgress.failed} of ${analysisProgress.total} resource types done…`
-                : 'Audit complete — queuing analysis…'
-            )}
-            {runState === 'done' && (
-              analysisProgress && analysisProgress.total > 0
-                ? `Done — ${analysisProgress.done} of ${analysisProgress.total} resource types analyzed${analysisProgress.failed ? `, ${analysisProgress.failed} failed` : ''}. Findings are ready below.`
-                : 'Audit complete — no resource types had data to analyze.'
-            )}
-            {runState === 'failed' && 'Audit failed — check the row below for details.'}
-            {runState === 'timeout' && 'Still running after 10 minutes — check back later; this page stopped polling but the audit may still finish.'}
-            {runState === 'error' && `Could not start audit: ${runError}`}
-            {(runState === 'done' || runState === 'failed' || runState === 'timeout' || runState === 'error') && (
-              <button
-                className="btn-ghost"
-                style={{ marginLeft: 'auto', padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
-                onClick={() => setRunState('idle')}
-              >
-                Dismiss
-              </button>
-            )}
-          </div>
-        )}
+        {runState !== 'idle' && (() => {
+          const stepIndex = parseStepIndex(currentStep) // 0 when not yet started
+          const collectionDone = runState === 'analyzing' || runState === 'done'
+          const collectionFailed = runState === 'failed'
+          const collectionPct = collectionDone ? 100 : (stepIndex / COLLECTION_STEPS.length) * 100
+          const showAnalysis = runState === 'analyzing' || runState === 'done'
+          const analysisPct = analysisProgress && analysisProgress.total > 0
+            ? ((analysisProgress.done + analysisProgress.failed) / analysisProgress.total) * 100
+            : 0
+          // The analyzer processes requests in the order they were queued
+          // (oldest first) with no "in progress" DB status of its own — the
+          // first still-pending row is the best guess at what's active now.
+          const firstPendingScope = analysisProgress?.scopes.find(s => s.status === 'pending')?.scope
+
+          return (
+            <div className="glass" style={{ padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+                <span style={{ fontSize: '0.82rem', fontWeight: 600, color: collectionFailed ? '#ef4444' : 'var(--t1)' }}>
+                  {collectionFailed ? 'Audit failed' : runState === 'starting' ? 'Starting audit…' : 'Collecting Azure resource data'}
+                </span>
+                {(runState === 'done' || collectionFailed || runState === 'timeout' || runState === 'error') && (
+                  <button
+                    className="btn-ghost"
+                    style={{ marginLeft: 'auto', padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
+                    onClick={() => setRunState('idle')}
+                  >
+                    Dismiss
+                  </button>
+                )}
+              </div>
+
+              {runState === 'error' && <span style={{ fontSize: '0.8rem', color: '#ef4444' }}>Could not start audit: {runError}</span>}
+              {runState === 'timeout' && <span style={{ fontSize: '0.8rem', color: 'var(--t2)' }}>Still running after 10 minutes — check back later; this page stopped polling but the audit may still finish.</span>}
+
+              {runState !== 'error' && (
+                <>
+                  <ProgressBar pct={collectionPct} />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0 1rem' }}>
+                    {COLLECTION_STEPS.map((s, i) => {
+                      const n = i + 1
+                      const st: StepStatus = collectionFailed && n === stepIndex ? 'failed'
+                        : collectionDone || n < stepIndex ? 'done'
+                        : n === stepIndex ? 'active' : 'pending'
+                      return <StepRow key={s.key} label={s.label} status={st} />
+                    })}
+                  </div>
+                </>
+              )}
+
+              {showAnalysis && (
+                <>
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+                    <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--t1)' }}>
+                      Analyzing with Claude Code
+                    </span>
+                    {analysisProgress && (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--t3)' }}>
+                        {analysisProgress.done + analysisProgress.failed} of {analysisProgress.total}
+                        {analysisProgress.failed ? ` (${analysisProgress.failed} failed)` : ''}
+                      </span>
+                    )}
+                  </div>
+                  {!analysisProgress && <span style={{ fontSize: '0.8rem', color: 'var(--t3)' }}>Queuing analysis requests…</span>}
+                  {analysisProgress && analysisProgress.total === 0 && (
+                    <span style={{ fontSize: '0.8rem', color: 'var(--t3)' }}>No resource types had data to analyze.</span>
+                  )}
+                  {analysisProgress && analysisProgress.total > 0 && (
+                    <>
+                      <ProgressBar pct={analysisPct} />
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0 1rem' }}>
+                        {analysisProgress.scopes.map(s => {
+                          const st: StepStatus = s.status === 'done' ? 'done' : s.status === 'failed' ? 'failed'
+                            : s.scope === firstPendingScope ? 'active' : 'pending'
+                          return <StepRow key={s.scope} label={s.scope} status={st} />
+                        })}
+                      </div>
+                    </>
+                  )}
+                  {runState === 'done' && (
+                    <span style={{ fontSize: '0.8rem', color: '#22c55e' }}>Findings are ready below.</span>
+                  )}
+                </>
+              )}
+            </div>
+          )
+        })()}
 
         {error && (
           <div className="glass" style={{ padding: '1.5rem', textAlign: 'center', color: '#ef4444', fontSize: '0.875rem' }}>

@@ -206,8 +206,13 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	// below), not merged into raw_data — keeping them out of that blob means
 	// reading cost/usage later never requires Postgres to parse the much
 	// larger 12-resource-type JSON just to pull out these two keys.
+	//
+	// current_step keeps counting from the extractor loop above (total+1,
+	// total+2) rather than restarting at 1/2 — the dashboard's step list
+	// (STEP_ORDER in app/audits/page.tsx) expects one continuous sequence of
+	// 14 steps, not 12 followed by a separate 1-of-2.
 	fmt.Fprintf(os.Stderr, "[1/2] Extracting cost...\n")
-	if err := db.UpdateAuditStep(ctx, pool, auditID, "extracting cost"); err != nil {
+	if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting cost (%d/%d)", total+1, total+2)); err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 	costData, err := extractors.ExtractCost(ctx, subID, cred)
@@ -216,7 +221,7 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 	fmt.Fprintf(os.Stderr, "[2/2] Extracting usage...\n")
-	if err := db.UpdateAuditStep(ctx, pool, auditID, "extracting usage"); err != nil {
+	if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting usage (%d/%d)", total+2, total+2)); err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 	usageData, err := extractors.ExtractUsage(ctx, subID, cred)

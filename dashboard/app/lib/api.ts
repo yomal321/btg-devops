@@ -46,7 +46,10 @@ export const api = {
     apiFetch<{ triggered: boolean; triggered_at: string }>('/api/audits/trigger', { method: 'POST' }),
 
   getAnalysisProgress: (auditId: string) =>
-    apiFetch<{ total: number; done: number; pending: number; failed: number }>(`/api/audits/${auditId}/analysis-progress`),
+    apiFetch<{
+      total: number; done: number; pending: number; failed: number
+      scopes: { scope: string; status: 'pending' | 'done' | 'failed' }[]
+    }>(`/api/audits/${auditId}/analysis-progress`),
 
   getAudit: (id: string) =>
     apiFetch<import('../types').AuditDetail>(`/api/audits/${id}`),
