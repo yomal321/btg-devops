@@ -12,6 +12,10 @@ on:
         description: 'Trigger type (leave as "manual" for manual runs)'
         required: false
         default: 'manual'
+      subscription_id:
+        description: 'Audit only this subscription ID (leave blank to audit all active subscriptions)'
+        required: false
+        default: ''
 
 jobs:
   collect:
@@ -54,7 +58,8 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
         run: |
           ./btg-devops collect \
-            --trigger "${{ steps.trigger.outputs.type }}"
+            --trigger "${{ steps.trigger.outputs.type }}" \
+            --subscription-id "${{ github.event.inputs.subscription_id }}"
 
       - name: Report failure
         if: failure()
