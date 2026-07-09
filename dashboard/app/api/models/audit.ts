@@ -16,7 +16,7 @@ export async function findAllAudits(): Promise<Audit[]> {
   const { rows } = await pool.query(
     `SELECT id, created_at, subscription_id,
             COALESCE(subscription_name, '') AS subscription_name,
-            trigger_type, status,
+            trigger_type, status, current_step,
             COALESCE(error_message, '') AS error_message,
             COALESCE(resource_counts, '{}'::jsonb) AS resource_counts,
             claude_analysis IS NOT NULL AS has_analysis

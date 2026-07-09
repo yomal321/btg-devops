@@ -86,3 +86,26 @@ export async function markAnalysisRequestFailed(id: string, errorMessage: string
   )
   return (rowCount ?? 0) > 0
 }
+
+export interface AnalysisProgress {
+  total: number
+  done: number
+  pending: number
+  failed: number
+}
+
+// Backs the dashboard's live "N of M resource types analyzed" progress bar
+// for one audit — the request-per-resource-type rows already exist (queued
+// by collect.go or a manual Analyze click), this just summarizes them.
+export async function findAnalysisProgressForAudit(auditId: string): Promise<AnalysisProgress> {
+  const { rows } = await pool.query(
+    `SELECT status, COUNT(*)::int AS count FROM analysis_requests WHERE audit_id = $1 GROUP BY status`,
+    [auditId]
+  )
+  const progress: AnalysisProgress = { total: 0, done: 0, pending: 0, failed: 0 }
+  for (const row of rows) {
+    progress[row.status as 'done' | 'pending' | 'failed'] = row.count
+    progress.total += row.count
+  }
+  return progress
+}

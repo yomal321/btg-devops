@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS audits (
 ALTER TABLE audits ADD COLUMN IF NOT EXISTS cost_data  JSONB;
 ALTER TABLE audits ADD COLUMN IF NOT EXISTS usage_data JSONB;
 
+-- current_step is a lightweight, transient progress indicator for the
+-- dashboard's live "Run Audit" view — e.g. "extracting acr (3/12)". Only
+-- meaningful while status='running'; cleared once the audit completes/fails
+-- so it never shows stale text on a finished audit.
+ALTER TABLE audits ADD COLUMN IF NOT EXISTS current_step TEXT;
+
 CREATE TABLE IF NOT EXISTS findings (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   audit_id        UUID NOT NULL REFERENCES audits(id) ON DELETE CASCADE,

@@ -187,6 +187,9 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 
 	for i, e := range allExtractors {
 		fmt.Fprintf(os.Stderr, "[%d/%d] Extracting %s...\n", i+1, total, e.key)
+		if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting %s (%d/%d)", e.key, i+1, total)); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+		}
 		data, err := e.run()
 		if err != nil {
 			extractErrors = append(extractErrors, fmt.Sprintf("%s: %v", e.key, err))
@@ -204,12 +207,18 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	// reading cost/usage later never requires Postgres to parse the much
 	// larger 12-resource-type JSON just to pull out these two keys.
 	fmt.Fprintf(os.Stderr, "[1/2] Extracting cost...\n")
+	if err := db.UpdateAuditStep(ctx, pool, auditID, "extracting cost"); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	}
 	costData, err := extractors.ExtractCost(ctx, subID, cred)
 	if err != nil {
 		extractErrors = append(extractErrors, fmt.Sprintf("cost: %v", err))
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 	fmt.Fprintf(os.Stderr, "[2/2] Extracting usage...\n")
+	if err := db.UpdateAuditStep(ctx, pool, auditID, "extracting usage"); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	}
 	usageData, err := extractors.ExtractUsage(ctx, subID, cred)
 	if err != nil {
 		extractErrors = append(extractErrors, fmt.Sprintf("usage: %v", err))

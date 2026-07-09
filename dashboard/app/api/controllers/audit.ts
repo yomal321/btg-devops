@@ -18,6 +18,42 @@ function formatUsageDate(n: number): string {
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
 }
 
+const GITHUB_REPO = 'yomal321/btg-devops'
+const GITHUB_WORKFLOW = 'scheduled-audit.yml'
+const GITHUB_REF = 'production'
+
+// Dispatches the same GitHub Actions workflow the daily cron uses, so a
+// dashboard-triggered manual audit reuses the Go CLI's collection logic
+// unchanged instead of duplicating it in TypeScript. Analysis requests get
+// queued automatically once collect.go finishes (see collect.go); this
+// endpoint only starts the audit, it doesn't wait for it.
+export async function triggerAuditController() {
+  const token = process.env.GITHUB_DISPATCH_TOKEN
+  if (!token) {
+    return { error: 'GITHUB_DISPATCH_TOKEN is not configured on the server', status: 500 }
+  }
+
+  const res = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ref: GITHUB_REF, inputs: { trigger_label: 'manual-dashboard' } }),
+    }
+  )
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    return { error: `GitHub dispatch failed (${res.status}): ${body}`, status: 502 }
+  }
+
+  return { data: { triggered: true, triggered_at: new Date().toISOString() }, status: 202 }
+}
+
 // getCostSummaryController computes daily/service cost aggregates from
 // cost_data (its own column — never touches the 12-resource-type raw_data
 // blob) and lists which usage resource types have data, so the frontend can
