@@ -2,8 +2,10 @@ name: Scheduled Azure Audit
 
 on:
   schedule:
-    # Runs every day at 08:00 UTC
-    - cron: '0 8 * * *'
+    # Runs every day at 07:30 UTC (1:00 PM Colombo) — analyzer runs 30 min
+    # later at 08:00 UTC (1:30 PM Colombo), see the btg-devops-mcp-analyzer
+    # routine's cron_expression.
+    - cron: '30 7 * * *'
   workflow_dispatch:
     inputs:
       trigger_label:
