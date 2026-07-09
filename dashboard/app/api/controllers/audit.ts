@@ -42,7 +42,9 @@ export async function triggerAuditController() {
         Accept: 'application/vnd.github+json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ ref: GITHUB_REF, inputs: { trigger_label: 'manual-dashboard' } }),
+      // collect.go's --trigger flag only accepts 'manual' or 'scheduled' —
+      // matches the audits.trigger_type CHECK constraint, no third value.
+      body: JSON.stringify({ ref: GITHUB_REF, inputs: { trigger_label: 'manual' } }),
     }
   )
 
