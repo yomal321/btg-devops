@@ -6,9 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "mcp-server": "node --env-file=.env.local --import tsx mcp-server/index.ts",
-    "build:mcp-server": "esbuild mcp-server/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/mcp-server.cjs --external:pg-native"
+    "lint": "eslint"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
@@ -29,7 +27,6 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
-    "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
@@ -37,9 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
-    "esbuild": "^0.24.0",
     "tailwindcss": "^4",
-    "tsx": "^4.23.0",
     "typescript": "^5"
   }
 }

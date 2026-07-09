@@ -5,8 +5,8 @@ import {
   findPendingAnalysisRequest,
   markAnalysisRequestDone,
   markAnalysisRequestFailed,
-} from '../app/api/models/analysisRequests'
-import { getScopedAuditData, saveAnalysisResult, type ClaudeAnalysis } from '../app/api/utils/claude'
+} from '../models/analysisRequests'
+import { getScopedAuditData, saveAnalysisResult, type ClaudeAnalysis } from '../utils/claude'
 
 // Thin MCP wrappers over the dashboard's existing model/util functions
 // (spec 8) — no business logic lives here. The scheduled Claude Code agent
