@@ -248,6 +248,20 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		return fmt.Errorf("saving audit: %w", err)
 	}
 
+	// Auto-queue one analysis request per resource type that actually
+	// collected data, so the scheduled MCP-server analyzer has something to
+	// process without anyone clicking "Analyze" in the dashboard. Best-effort
+	// — a queuing failure here shouldn't fail an otherwise-successful audit.
+	var scopesToQueue []string
+	for _, e := range allExtractors {
+		if resourceCounts[e.key] > 0 {
+			scopesToQueue = append(scopesToQueue, e.key)
+		}
+	}
+	if err := db.QueueAnalysisRequests(ctx, pool, auditID, scopesToQueue); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	}
+
 	var costJSON, usageJSON json.RawMessage
 	if costData != nil {
 		if costJSON, err = json.Marshal(costData); err != nil {
