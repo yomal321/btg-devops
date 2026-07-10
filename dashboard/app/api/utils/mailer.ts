@@ -20,6 +20,20 @@ export async function resolveNotificationRecipients(): Promise<string[]> {
     .map(u => u.email)
 }
 
+// Resolves recipients for an explicit "Share" action — a deliberate,
+// one-off send, so it bypasses the notification_role_settings enabled/
+// disabled toggle (that toggle governs automatic alerts, not something a
+// user is directly asking to send right now). Recipients are the union of
+// every active user in the given roles plus every explicitly given userId.
+export async function resolveShareRecipients(roles: string[], userIds: string[]): Promise<string[]> {
+  const users = await findAllUsers()
+  const roleSet = new Set(roles)
+  const idSet = new Set(userIds)
+  return users
+    .filter(u => u.is_active && (roleSet.has(u.role) || idSet.has(u.id)))
+    .map(u => u.email)
+}
+
 export async function sendMail(subject: string, html: string, recipients: string[]): Promise<void> {
   const user = process.env.GMAIL_USER
   const pass = process.env.GMAIL_APP_PASSWORD

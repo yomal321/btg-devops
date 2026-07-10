@@ -51,6 +51,12 @@ export const api = {
       scopes: { scope: string; status: 'pending' | 'done' | 'failed' }[]
     }>(`/api/audits/${auditId}/analysis-progress`),
 
+  shareAnalysis: (auditId: string, scope: string, roles: string[], userIds: string[]) =>
+    apiFetch<{ sent: boolean; recipientCount: number }>(`/api/audits/${auditId}/share`, {
+      method: 'POST',
+      body: JSON.stringify({ scope, roles, userIds }),
+    }),
+
   getAudit: (id: string) =>
     apiFetch<import('../types').AuditDetail>(`/api/audits/${id}`),
 
