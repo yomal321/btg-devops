@@ -5,8 +5,11 @@ import {
   findPendingAnalysisRequest,
   markAnalysisRequestDone,
   markAnalysisRequestFailed,
+  hasNoPendingForAudit,
 } from '../models/analysisRequests'
 import { getScopedAuditData, saveAnalysisResult, type ClaudeAnalysis } from '../utils/claude'
+import { buildAuditSummaryEmail } from '../utils/auditSummaryEmail'
+import { sendMail, resolveNotificationRecipients } from '../utils/mailer'
 
 // Thin MCP wrappers over the dashboard's existing model/util functions
 // (spec 8) — no business logic lives here. The scheduled Claude Code agent
@@ -80,13 +83,31 @@ export function registerTools(server: McpServer) {
         const message = e instanceof Error ? e.message : 'failed to save analysis'
         const pending = await findPendingAnalysisRequest(auditId, scope)
         if (pending) await markAnalysisRequestFailed(pending.id, message)
+        await sendSummaryEmailIfAuditComplete(auditId)
         return { content: [{ type: 'text', text: JSON.stringify({ error: message }) }], isError: true }
       }
 
       const pending = await findPendingAnalysisRequest(auditId, scope)
       if (pending) await markAnalysisRequestDone(pending.id)
+      await sendSummaryEmailIfAuditComplete(auditId)
 
       return { content: [{ type: 'text', text: JSON.stringify({ saved: true, requestId: pending?.id ?? null }) }] }
     }
   )
+}
+
+// One consolidated email per audit, not one per resource type — checked
+// after every save_analysis call, fires only once (when the last pending
+// request for this audit resolves). Best-effort: a notification failure
+// must never surface as an MCP tool error to the analyzer.
+async function sendSummaryEmailIfAuditComplete(auditId: string): Promise<void> {
+  try {
+    if (!(await hasNoPendingForAudit(auditId))) return
+    const email = await buildAuditSummaryEmail(auditId)
+    if (!email) return
+    const recipients = await resolveNotificationRecipients()
+    await sendMail(email.subject, email.html, recipients)
+  } catch (e) {
+    console.warn('[mailer] audit-complete summary email failed:', e instanceof Error ? e.message : e)
+  }
 }

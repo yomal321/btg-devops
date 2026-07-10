@@ -71,6 +71,17 @@ export async function listPendingAnalysisRequests(limit = 20): Promise<AnalysisR
   return rows
 }
 
+// True once every analysis_requests row for this audit has resolved
+// (done or failed, none still pending) — the signal for sending the one
+// consolidated "analysis complete" summary email, see auditSummaryEmail.ts.
+export async function hasNoPendingForAudit(auditId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM analysis_requests WHERE audit_id = $1 AND status = 'pending'`,
+    [auditId]
+  )
+  return rows[0].n === 0
+}
+
 export async function markAnalysisRequestDone(id: string): Promise<boolean> {
   const { rowCount } = await pool.query(
     `UPDATE analysis_requests SET status = 'done', completed_at = NOW() WHERE id = $1`,

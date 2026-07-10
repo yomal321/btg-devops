@@ -90,7 +90,7 @@ function countsSummary(a: Audit): string {
   return entries.length > 3 ? `${top}, …` : top
 }
 
-type RunState = 'idle' | 'starting' | 'waiting' | 'analyzing' | 'done' | 'failed' | 'timeout' | 'error'
+type RunState = 'idle' | 'starting' | 'waiting' | 'done' | 'failed' | 'timeout' | 'error'
 
 export default function AuditsPage() {
   const router = useRouter()
@@ -105,9 +105,7 @@ export default function AuditsPage() {
   const [runState, setRunState] = useState<RunState>('idle')
   const [runError, setRunError] = useState('')
   const [currentStep, setCurrentStep] = useState<string | null>(null)
-  const [analysisProgress, setAnalysisProgress] = useState<Awaited<ReturnType<typeof api.getAnalysisProgress>> | null>(null)
   const triggeredAtRef = useRef<string | null>(null)
-  const runningAuditIdRef = useRef<string | null>(null)
 
   function refreshAudits() {
     return api.listAudits().then(setAudits).catch(e => setError(e instanceof Error ? e.message : 'Failed to load audits'))
@@ -119,6 +117,9 @@ export default function AuditsPage() {
   // and finish, since GitHub's workflow_dispatch API doesn't hand back the
   // resulting audit's ID directly — we just watch our own audits table.
   // Shows current_step (e.g. "extracting acr (3/12)") live while it runs.
+  // Stops at collection finishing — analysis timing is separate (scheduled
+  // or manually triggered), not shown here, since it doesn't start right
+  // after collection and tracking it here implied otherwise.
   useEffect(() => {
     if (runState !== 'waiting' || !triggeredAtRef.current) return
     const startedAt = Date.now()
@@ -137,39 +138,7 @@ export default function AuditsPage() {
       if (!started) return
       setCurrentStep(started.current_step)
       if (started.status !== 'running') {
-        if (started.status === 'completed') {
-          runningAuditIdRef.current = started.id
-          setRunState('analyzing')
-        } else {
-          setRunState('failed')
-        }
-        clearInterval(interval)
-      }
-    }, RUN_AUDIT_POLL_MS)
-
-    return () => clearInterval(interval)
-  }, [runState])
-
-  // Once collection finishes, switch to polling analysis_requests progress
-  // for that specific audit — collect.go auto-queues one request per
-  // resource type, so this reflects real per-scope completion, not a guess.
-  useEffect(() => {
-    if (runState !== 'analyzing' || !runningAuditIdRef.current) return
-    const auditId = runningAuditIdRef.current
-    const enteredAt = Date.now()
-
-    const interval = setInterval(async () => {
-      const progress = await api.getAnalysisProgress(auditId).catch(() => null)
-      if (!progress) return
-      setAnalysisProgress(progress)
-      // collect.go queues these rows right after marking the audit
-      // completed, so total can briefly read 0 before that write lands —
-      // only trust a zero total once we've waited long enough for it to be
-      // real (no resource types had data) rather than a race.
-      const zeroIsReal = progress.total === 0 && Date.now() - enteredAt > 15000
-      if (zeroIsReal || (progress.total > 0 && progress.done + progress.failed >= progress.total)) {
-        setRunState('done')
-        refreshAudits()
+        setRunState(started.status === 'completed' ? 'done' : 'failed')
         clearInterval(interval)
       }
     }, RUN_AUDIT_POLL_MS)
@@ -181,7 +150,6 @@ export default function AuditsPage() {
     setRunState('starting')
     setRunError('')
     setCurrentStep(null)
-    setAnalysisProgress(null)
     try {
       const result = await api.triggerAudit()
       triggeredAtRef.current = result.triggered_at
@@ -260,11 +228,11 @@ export default function AuditsPage() {
             {user?.role === 'admin' && (
               <button
                 className="btn-ghost"
-                disabled={runState === 'starting' || runState === 'waiting' || runState === 'analyzing'}
+                disabled={runState === 'starting' || runState === 'waiting'}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.45rem 0.875rem', fontSize: '0.8rem' }}
                 onClick={handleRunAudit}
               >
-                {runState === 'starting' || runState === 'waiting' || runState === 'analyzing'
+                {runState === 'starting' || runState === 'waiting'
                   ? <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} />
                   : <Play size={14} />}
                 Run Audit
@@ -275,23 +243,15 @@ export default function AuditsPage() {
 
         {runState !== 'idle' && (() => {
           const stepIndex = parseStepIndex(currentStep) // 0 when not yet started
-          const collectionDone = runState === 'analyzing' || runState === 'done'
+          const collectionDone = runState === 'done'
           const collectionFailed = runState === 'failed'
           const collectionPct = collectionDone ? 100 : (stepIndex / COLLECTION_STEPS.length) * 100
-          const showAnalysis = runState === 'analyzing' || runState === 'done'
-          const analysisPct = analysisProgress && analysisProgress.total > 0
-            ? ((analysisProgress.done + analysisProgress.failed) / analysisProgress.total) * 100
-            : 0
-          // The analyzer processes requests in the order they were queued
-          // (oldest first) with no "in progress" DB status of its own — the
-          // first still-pending row is the best guess at what's active now.
-          const firstPendingScope = analysisProgress?.scopes.find(s => s.status === 'pending')?.scope
 
           return (
             <div className="glass" style={{ padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
                 <span style={{ fontSize: '0.82rem', fontWeight: 600, color: collectionFailed ? '#ef4444' : 'var(--t1)' }}>
-                  {collectionFailed ? 'Audit failed' : runState === 'starting' ? 'Starting audit…' : 'Collecting Azure resource data'}
+                  {collectionFailed ? 'Audit failed' : runState === 'starting' ? 'Starting audit…' : collectionDone ? 'Audit complete' : 'Collecting Azure resource data'}
                 </span>
                 {(runState === 'done' || collectionFailed || runState === 'timeout' || runState === 'error') && (
                   <button
@@ -322,39 +282,10 @@ export default function AuditsPage() {
                 </>
               )}
 
-              {showAnalysis && (
-                <>
-                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-                    <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--t1)' }}>
-                      Analyzing with Claude Code
-                    </span>
-                    {analysisProgress && (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--t3)' }}>
-                        {analysisProgress.done + analysisProgress.failed} of {analysisProgress.total}
-                        {analysisProgress.failed ? ` (${analysisProgress.failed} failed)` : ''}
-                      </span>
-                    )}
-                  </div>
-                  {!analysisProgress && <span style={{ fontSize: '0.8rem', color: 'var(--t3)' }}>Queuing analysis requests…</span>}
-                  {analysisProgress && analysisProgress.total === 0 && (
-                    <span style={{ fontSize: '0.8rem', color: 'var(--t3)' }}>No resource types had data to analyze.</span>
-                  )}
-                  {analysisProgress && analysisProgress.total > 0 && (
-                    <>
-                      <ProgressBar pct={analysisPct} />
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0 1rem' }}>
-                        {analysisProgress.scopes.map(s => {
-                          const st: StepStatus = s.status === 'done' ? 'done' : s.status === 'failed' ? 'failed'
-                            : s.scope === firstPendingScope ? 'active' : 'pending'
-                          return <StepRow key={s.scope} label={s.scope} status={st} />
-                        })}
-                      </div>
-                    </>
-                  )}
-                  {runState === 'done' && (
-                    <span style={{ fontSize: '0.8rem', color: '#22c55e' }}>Findings are ready below.</span>
-                  )}
-                </>
+              {collectionDone && (
+                <span style={{ fontSize: '0.8rem', color: 'var(--t3)' }}>
+                  Analysis requests have been queued — results appear once the scheduled analyzer (1:30 PM daily) or a manual trigger processes them.
+                </span>
               )}
             </div>
           )
