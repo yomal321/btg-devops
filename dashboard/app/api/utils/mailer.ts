@@ -57,12 +57,19 @@ export async function sendMail(subject: string, html: string, recipients: string
   }
 }
 
+export interface MailAttachment {
+  filename: string
+  content: Buffer
+}
+
 // Throws instead of swallowing — for the user-initiated "Share" action,
 // where silently reporting success on a failed send would be actively
 // misleading (the button would say "Sent" while nothing arrived).
-export async function sendMailOrThrow(subject: string, html: string, recipients: string[]): Promise<void> {
+export async function sendMailOrThrow(
+  subject: string, html: string, recipients: string[], attachments: MailAttachment[] = []
+): Promise<void> {
   const built = buildTransport()
   if (!built) throw new Error('Email is not configured on the server (GMAIL_USER/GMAIL_APP_PASSWORD missing)')
   if (recipients.length === 0) throw new Error('No recipients to send to')
-  await built.transport.sendMail({ from: built.user, to: recipients, subject, html })
+  await built.transport.sendMail({ from: built.user, to: recipients, subject, html, attachments })
 }
