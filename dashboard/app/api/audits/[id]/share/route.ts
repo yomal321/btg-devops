@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, requireRole } from '../../../middleware/auth'
 import { unauthorized, forbidden, badRequest } from '../../../utils/response'
 import { buildScopeShareEmail } from '../../../utils/auditSummaryEmail'
-import { sendMail, resolveShareRecipients } from '../../../utils/mailer'
+import { sendMailOrThrow, resolveShareRecipients } from '../../../utils/mailer'
+import { serverError } from '../../../utils/response'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(req)
@@ -33,6 +34,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return badRequest('no active users matched the selected roles/users')
   }
 
-  await sendMail(email.subject, email.html, recipients)
+  try {
+    await sendMailOrThrow(email.subject, email.html, recipients)
+  } catch (e) {
+    return serverError(e instanceof Error ? e.message : 'failed to send email')
+  }
   return NextResponse.json({ sent: true, recipientCount: recipients.length })
 }

@@ -8,7 +8,7 @@ import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { buildScopeGroups, scopeLabel, firstScope, UsageTypeInfo } from '../lib/scopes'
 import { severityConfig, findingStatusConfig, findingAge } from '../lib/utils'
-import { exportFindingsAsCSV, exportFindingsAsPDF } from '../lib/exportFindings'
+import { exportFindingsAsExcel, exportFindingsAsPDF } from '../lib/exportFindings'
 import type { Finding, User } from '../types'
 
 interface AnalysisFinding {
@@ -177,7 +177,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
 
   const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)
 
-  function handleExport(format: 'pdf' | 'csv') {
+  function handleExport(format: 'pdf' | 'excel') {
     setShowExportMenu(false)
     if (!currentAnalysis) return
     const meta = {
@@ -186,7 +186,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
       summary: currentAnalysis.summary || '',
       generatedAt: currentAnalysis.generated_at,
     }
-    if (format === 'csv') exportFindingsAsCSV(findings, meta)
+    if (format === 'excel') exportFindingsAsExcel(findings, meta)
     else exportFindingsAsPDF(findings, meta)
   }
 
@@ -293,10 +293,10 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
                       <FileText size={14} /> PDF
                     </button>
                     <button
-                      onClick={() => handleExport('csv')}
+                      onClick={() => handleExport('excel')}
                       style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.55rem 0.75rem', background: 'none', border: 'none', color: 'var(--t1)', fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left' }}
                     >
-                      <FileSpreadsheet size={14} /> CSV
+                      <FileSpreadsheet size={14} /> Excel
                     </button>
                   </div>
                 </>

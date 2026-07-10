@@ -34,28 +34,35 @@ export async function resolveShareRecipients(roles: string[], userIds: string[])
     .map(u => u.email)
 }
 
-export async function sendMail(subject: string, html: string, recipients: string[]): Promise<void> {
+function buildTransport() {
   const user = process.env.GMAIL_USER
   const pass = process.env.GMAIL_APP_PASSWORD
-  if (!user || !pass) {
-    console.warn('[mailer] skipped: GMAIL_USER/GMAIL_APP_PASSWORD not set')
-    return
-  }
-  if (recipients.length === 0) {
-    console.warn('[mailer] skipped: no notification recipients resolved')
-    return
-  }
+  if (!user || !pass) return null
+  return { user, transport: nodemailer.createTransport({ host: 'smtp.gmail.com', port: 587, secure: false, auth: { user, pass } }) }
+}
 
-  const transport = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,
-    auth: { user, pass },
-  })
+// Fail-soft — for automatic notifications (audit-complete, audit-failed)
+// triggered from inside another flow (the MCP save_analysis tool). A send
+// failure here must never surface as an error in that flow; it's logged
+// and swallowed.
+export async function sendMail(subject: string, html: string, recipients: string[]): Promise<void> {
+  const built = buildTransport()
+  if (!built) { console.warn('[mailer] skipped: GMAIL_USER/GMAIL_APP_PASSWORD not set'); return }
+  if (recipients.length === 0) { console.warn('[mailer] skipped: no notification recipients resolved'); return }
 
   try {
-    await transport.sendMail({ from: user, to: recipients, subject, html })
+    await built.transport.sendMail({ from: built.user, to: recipients, subject, html })
   } catch (e) {
     console.warn('[mailer] failed to send:', e instanceof Error ? e.message : e)
   }
+}
+
+// Throws instead of swallowing — for the user-initiated "Share" action,
+// where silently reporting success on a failed send would be actively
+// misleading (the button would say "Sent" while nothing arrived).
+export async function sendMailOrThrow(subject: string, html: string, recipients: string[]): Promise<void> {
+  const built = buildTransport()
+  if (!built) throw new Error('Email is not configured on the server (GMAIL_USER/GMAIL_APP_PASSWORD missing)')
+  if (recipients.length === 0) throw new Error('No recipients to send to')
+  await built.transport.sendMail({ from: built.user, to: recipients, subject, html })
 }
