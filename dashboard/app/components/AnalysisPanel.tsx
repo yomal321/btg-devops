@@ -1,15 +1,15 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, Download, Share2, FileText, FileSpreadsheet } from 'lucide-react'
 import { Badge } from './Badge'
 import { Modal } from './Modal'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
-import { useModel, ModelPicker, MODEL_CATALOG } from '../lib/model'
 import { buildScopeGroups, scopeLabel, firstScope, UsageTypeInfo } from '../lib/scopes'
 import { severityConfig, findingStatusConfig, findingAge } from '../lib/utils'
-import type { Finding } from '../types'
+import { exportFindingsAsExcel, exportFindingsAsPDF } from '../lib/exportFindings'
+import type { Finding, User } from '../types'
 
 interface AnalysisFinding {
   severity: 'Critical' | 'Warning' | 'Info'
@@ -41,6 +41,11 @@ export interface AnalysisStore {
 }
 
 const ALL_SCOPE = 'all'
+const POLL_INTERVAL_MS = 7000
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 function normalizeStore(raw: unknown): AnalysisStore {
   if (!raw || typeof raw !== 'object') return {}
@@ -74,9 +79,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   const { user } = useAuth()
   const canAnalyze = user?.role === 'admin' || user?.role === 'analyst'
 
-  const { choice } = useModel()
-  const modelLabel = MODEL_CATALOG.find(m => m.provider === choice.provider && m.model === choice.model)?.label || choice.model
-
   const resourceTypes = useMemo(() => Object.keys(resourceCounts || {}).sort(), [resourceCounts])
   const scopeGroups = useMemo(
     () => buildScopeGroups(resourceCounts, hasCost, usageTypes),
@@ -91,6 +93,15 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   const [sevFilter, setSevFilter]   = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<string>('all')
 
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [shareRoles, setShareRoles]     = useState<string[]>([])
+  const [shareUserIds, setShareUserIds] = useState<string[]>([])
+  const [shareUsers, setShareUsers]     = useState<User[] | null>(null)
+  const [shareSending, setShareSending] = useState(false)
+  const [shareError, setShareError]     = useState('')
+  const [shareDone, setShareDone]       = useState<number | null>(null)
+
   const currentAnalysis = scope === ALL_SCOPE ? store.all : store.by_resource?.[scope]
 
   // DB-backed findings for the current scope — these carry lifecycle fields
@@ -98,6 +109,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   // with the scope they were fetched for so a stale response can't render
   // under a different scope.
   const [dbFindings, setDbFindings] = useState<{ scope: string; rows: Finding[] } | null>(null)
+  const pollCancelRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!currentAnalysis) return
@@ -108,23 +120,44 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
     return () => { cancelled = true }
   }, [auditId, scope, currentAnalysis])
 
+  // Stops an in-flight poll loop if the panel unmounts (e.g. navigating away
+  // mid-analysis) so it doesn't keep calling setState after the fact.
+  useEffect(() => () => pollCancelRef.current?.(), [])
+
+  // Analyze now queues a request for the scheduled Claude Code agent (spec 8)
+  // instead of calling an LLM directly from this request, and polls until
+  // the agent (via the MCP server) writes a result back. cancelledRef lets
+  // an in-flight poll loop stop itself if the component unmounts mid-poll.
   async function analyzeScope(slug: string) {
     setRunning(true)
     setError('')
+    let cancelled = false
+    const stop = () => { cancelled = true }
+    pollCancelRef.current = stop
     try {
-      const result = await api.analyzeAudit(auditId, slug === ALL_SCOPE ? undefined : slug)
-      const analysis = result.analysis as unknown as Analysis
-      setStore(s =>
-        slug === ALL_SCOPE
-          ? { ...s, all: analysis }
-          : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
-      )
-      // Findings were just (re)written server-side — refresh the DB copies.
-      api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
+      const { requestId, status } = await api.requestAnalysis(auditId, slug)
+      let current = status
+      while (current === 'pending' && !cancelled) {
+        await sleep(POLL_INTERVAL_MS)
+        if (cancelled) break
+        const poll = await api.getAnalysisRequest(auditId, requestId)
+        current = poll.status
+        if (current === 'done' && poll.analysis) {
+          const analysis = poll.analysis as unknown as Analysis
+          setStore(s =>
+            slug === ALL_SCOPE
+              ? { ...s, all: analysis }
+              : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
+          )
+          api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
+        } else if (current === 'failed') {
+          setError(poll.error_message || 'Analysis failed')
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed')
     } finally {
-      setRunning(false)
+      if (!cancelled) setRunning(false)
     }
   }
 
@@ -139,6 +172,53 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
       setDbFindings(d => d && { ...d, rows: d.rows.map(r => (r.id === id ? { ...r, status } : r)) })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Status update failed')
+    }
+  }
+
+  const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)
+
+  function handleExport(format: 'pdf' | 'excel') {
+    setShowExportMenu(false)
+    if (!currentAnalysis) return
+    const meta = {
+      auditId,
+      scopeLabel: currentScopeLabel,
+      summary: currentAnalysis.summary || '',
+      generatedAt: currentAnalysis.generated_at,
+    }
+    if (format === 'excel') exportFindingsAsExcel(findings, meta)
+    else exportFindingsAsPDF(findings, meta)
+  }
+
+  function openShareModal() {
+    setShowShareModal(true)
+    setShareError('')
+    setShareDone(null)
+    if (user?.role === 'admin' && !shareUsers) {
+      api.listUsers().then(setShareUsers).catch(() => setShareUsers([]))
+    }
+  }
+
+  function toggleShareRole(role: string) {
+    setShareRoles(r => r.includes(role) ? r.filter(x => x !== role) : [...r, role])
+  }
+
+  function toggleShareUser(id: string) {
+    setShareUserIds(u => u.includes(id) ? u.filter(x => x !== id) : [...u, id])
+  }
+
+  async function sendShare() {
+    setShareSending(true)
+    setShareError('')
+    try {
+      const result = await api.shareAnalysis(auditId, scope, shareRoles, shareUserIds)
+      setShareDone(result.recipientCount)
+      setShareRoles([])
+      setShareUserIds([])
+    } catch (e) {
+      setShareError(e instanceof Error ? e.message : 'Failed to share')
+    } finally {
+      setShareSending(false)
     }
   }
 
@@ -186,11 +266,51 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         <Sparkles size={16} color="var(--acc)" />
         <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>AI Analysis</h2>
         {currentAnalysis && (
-          <Badge color="success" label={`Cached · ${scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)} · ${new Date(currentAnalysis.generated_at).toLocaleDateString()}`} />
+          <Badge color="success" label={`Cached · ${currentScopeLabel} · ${new Date(currentAnalysis.generated_at).toLocaleDateString()}`} />
         )}
-        <div style={{ marginLeft: 'auto' }}>
-          <ModelPicker />
-        </div>
+        {currentAnalysis && (
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', position: 'relative' }}>
+            <div style={{ position: 'relative' }}>
+              <button
+                className="btn-ghost"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.4rem 0.75rem', fontSize: '0.78rem' }}
+                onClick={() => setShowExportMenu(v => !v)}
+              >
+                <Download size={13} /> Export
+              </button>
+              {showExportMenu && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setShowExportMenu(false)} />
+                  <div style={{
+                    position: 'absolute', top: '110%', right: 0, zIndex: 10,
+                    background: 'var(--panel)', border: '1px solid var(--border-strong)', borderRadius: 8,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.25)', minWidth: 140, overflow: 'hidden',
+                  }}>
+                    <button
+                      onClick={() => handleExport('pdf')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.55rem 0.75rem', background: 'none', border: 'none', color: 'var(--t1)', fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left' }}
+                    >
+                      <FileText size={14} /> PDF
+                    </button>
+                    <button
+                      onClick={() => handleExport('excel')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.55rem 0.75rem', background: 'none', border: 'none', color: 'var(--t1)', fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left' }}
+                    >
+                      <FileSpreadsheet size={14} /> Excel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+            <button
+              className="btn-ghost"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.4rem 0.75rem', fontSize: '0.78rem' }}
+              onClick={openShareModal}
+            >
+              <Share2 size={13} /> Share
+            </button>
+          </div>
+        )}
       </div>
 
       {/* scope selector — always visible so viewers can browse cached results too */}
@@ -231,13 +351,13 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
           <p style={{ fontSize: '0.85rem', color: 'var(--t2)', marginBottom: '1rem' }}>
             {scope === ALL_SCOPE
-              ? `Send the full audit (all resource types) to ${modelLabel} in one request.`
+              ? 'Queue the full audit (all resource types) for analysis in one request.'
               : resourceTypes.includes(scope)
-              ? `Send only the "${scope}" resources to ${modelLabel} for a focused, fast analysis.`
-              : `Send the ${scopeLabel(scope, scopeGroups)} to ${modelLabel} for a focused analysis.`}
+              ? `Queue only the "${scope}" resources for a focused analysis.`
+              : `Queue the ${scopeLabel(scope, scopeGroups)} for a focused analysis.`}
           </p>
           {error && <p style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '0.75rem' }}>{error}</p>}
-          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze with {modelLabel}</button>
+          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze</button>
         </div>
       )}
 
@@ -250,10 +370,10 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             borderRadius: '50%', animation: 'spin 0.8s linear infinite',
           }} />
           <p style={{ fontSize: '0.82rem', color: 'var(--t2)' }}>
-            {scope === ALL_SCOPE ? 'Sending the full audit for analysis…' : `Analyzing ${scopeLabel(scope, scopeGroups)}…`}
+            {scope === ALL_SCOPE ? 'Full audit queued for analysis…' : `${scopeLabel(scope, scopeGroups)} queued for analysis…`}
           </p>
           <p style={{ fontSize: '0.72rem', color: 'var(--t4)', marginTop: '0.25rem' }}>
-            {scope === ALL_SCOPE ? 'This can take a minute or more.' : 'This should only take a few seconds.'}
+            A scheduled agent picks this up shortly — usually ready within a few minutes.
           </p>
         </div>
       )}
@@ -390,8 +510,8 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             }}>
               <TriangleAlert size={17} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
               <p style={{ fontSize: '0.82rem', color: 'var(--t2)', lineHeight: 1.55 }}>
-                This sends the complete audit dataset — all {resourceTypes.length} resource types — to {modelLabel} in a single request.
-                It is slower and uses significantly more tokens than analyzing one resource type at a time.
+                This queues the complete audit dataset — all {resourceTypes.length} resource types — as a single analysis request.
+                It takes longer for the agent to work through than analyzing one resource type at a time.
               </p>
             </div>
             {error && <p style={{ color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>}
@@ -404,6 +524,64 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
                 Yes, Analyze All
               </button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Share dialog */}
+      {showShareModal && (
+        <Modal title={`Share "${currentScopeLabel}" Analysis`} onClose={() => setShowShareModal(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {shareDone !== null ? (
+              <p style={{ fontSize: '0.85rem', color: '#22c55e' }}>
+                Sent to {shareDone} recipient{shareDone === 1 ? '' : 's'}.
+              </p>
+            ) : (
+              <>
+                <div>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--t3)', marginBottom: '0.5rem' }}>Share with role:</p>
+                  <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    {['admin', 'analyst', 'viewer'].map(role => (
+                      <label key={role} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', color: 'var(--t2)', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={shareRoles.includes(role)} onChange={() => toggleShareRole(role)} />
+                        {role}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {user?.role === 'admin' && (
+                  <div>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--t3)', marginBottom: '0.5rem' }}>Or specific users:</p>
+                    {!shareUsers ? (
+                      <p style={{ fontSize: '0.78rem', color: 'var(--t4)' }}>Loading users…</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', maxHeight: 160, overflowY: 'auto' }}>
+                        {shareUsers.map(u => (
+                          <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--t2)', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={shareUserIds.includes(u.id)} onChange={() => toggleShareUser(u.id)} />
+                            {u.email} <span style={{ color: 'var(--t4)', fontSize: '0.72rem' }}>({u.role})</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {shareError && <p style={{ color: '#ef4444', fontSize: '0.8rem' }}>{shareError}</p>}
+
+                <div style={{ display: 'flex', gap: '0.625rem', justifyContent: 'flex-end' }}>
+                  <button className="btn-ghost" onClick={() => setShowShareModal(false)}>Cancel</button>
+                  <button
+                    className="btn-primary"
+                    disabled={shareSending || (shareRoles.length === 0 && shareUserIds.length === 0)}
+                    onClick={sendShare}
+                  >
+                    {shareSending ? 'Sending…' : 'Send'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       )}

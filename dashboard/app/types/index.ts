@@ -22,6 +22,7 @@ export interface Audit {
   subscription_name: string
   trigger_type: string
   status: string
+  current_step: string | null
   error_message: string
   resource_counts: Record<string, number>
   has_analysis: boolean

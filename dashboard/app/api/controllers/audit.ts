@@ -1,6 +1,7 @@
 import { findAllAudits, findAuditById, findAuditResource, findAuditRawData, findAuditCostRaw, findAuditUsageRaw, updateClaudeAnalysis, insertAudit, updateAudit, deleteAudit, clearClaudeAnalysis, findAnalysisById } from '../models/audit'
 import { findResourceBySlug } from '../models/resource'
-import { runAnalysis } from '../utils/claude'
+import { insertAnalysisRequest, findLatestAnalysisRequest, findAnalysisRequestById } from '../models/analysisRequests'
+import { runAnalysis, getAnalysisForScope } from '../utils/claude'
 import { LLMProvider } from '../utils/llm'
 import { buildUsageGroups, listUsageTypes } from '../utils/usage'
 import { computeRegionDistribution, computeCrossRegionMismatches } from '../utils/region'
@@ -15,6 +16,44 @@ function coerceProvider(p?: string): LLMProvider | undefined {
 function formatUsageDate(n: number): string {
   const s = String(n)
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
+}
+
+const GITHUB_REPO = 'yomal321/btg-devops'
+const GITHUB_WORKFLOW = 'scheduled-audit.yml'
+const GITHUB_REF = 'production'
+
+// Dispatches the same GitHub Actions workflow the daily cron uses, so a
+// dashboard-triggered manual audit reuses the Go CLI's collection logic
+// unchanged instead of duplicating it in TypeScript. Analysis requests get
+// queued automatically once collect.go finishes (see collect.go); this
+// endpoint only starts the audit, it doesn't wait for it.
+export async function triggerAuditController() {
+  const token = process.env.GITHUB_DISPATCH_TOKEN
+  if (!token) {
+    return { error: 'GITHUB_DISPATCH_TOKEN is not configured on the server', status: 500 }
+  }
+
+  const res = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      // collect.go's --trigger flag only accepts 'manual' or 'scheduled' —
+      // matches the audits.trigger_type CHECK constraint, no third value.
+      body: JSON.stringify({ ref: GITHUB_REF, inputs: { trigger_label: 'manual' } }),
+    }
+  )
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    return { error: `GitHub dispatch failed (${res.status}): ${body}`, status: 502 }
+  }
+
+  return { data: { triggered: true, triggered_at: new Date().toISOString() }, status: 202 }
 }
 
 // getCostSummaryController computes daily/service cost aggregates from
@@ -105,6 +144,41 @@ export async function runAnalysisController(auditId: string, resourceSlug?: stri
     const message = e instanceof Error ? e.message : 'analysis failed'
     return { error: message, status: 500 }
   }
+}
+
+// Enqueues an analysis run instead of calling an LLM directly (spec 8) — a
+// scheduled Claude Code agent claims the pending row through the MCP server
+// and writes the result back via saveAnalysisResult/getAnalysisForScope, the
+// same functions runAnalysis itself uses for the (still-supported)
+// synchronous path.
+export async function createAnalysisRequestController(auditId: string, scope: string) {
+  const audit = await findAuditById(auditId)
+  if (!audit) return { error: 'audit not found', status: 404 }
+
+  // Reuse an already-pending request for this exact scope rather than
+  // enqueueing a duplicate — e.g. a double-click or a re-mounted poll.
+  const latest = await findLatestAnalysisRequest(auditId, scope)
+  if (latest && latest.status === 'pending') {
+    return { data: { requestId: latest.id, status: latest.status }, status: 200 }
+  }
+
+  const request = await insertAnalysisRequest(auditId, scope)
+  return { data: { requestId: request.id, status: request.status }, status: 201 }
+}
+
+export async function getAnalysisRequestController(auditId: string, requestId: string) {
+  const request = await findAnalysisRequestById(requestId)
+  if (!request || request.audit_id !== auditId) return { error: 'analysis request not found', status: 404 }
+
+  if (request.status !== 'done') {
+    return {
+      data: { requestId: request.id, status: request.status, error_message: request.error_message },
+      status: 200,
+    }
+  }
+
+  const analysis = await getAnalysisForScope(auditId, request.scope)
+  return { data: { requestId: request.id, status: request.status, analysis }, status: 200 }
 }
 
 export async function listAuditsController() {

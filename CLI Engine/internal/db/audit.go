@@ -36,7 +36,7 @@ func CreateAudit(ctx context.Context, pool *pgxpool.Pool, p CreateAuditParams) (
 func CompleteAudit(ctx context.Context, pool *pgxpool.Pool, auditID string, rawData json.RawMessage, resourceCounts json.RawMessage) error {
 	tag, err := pool.Exec(ctx, `
 		UPDATE audits
-		SET status = 'completed', raw_data = $2, resource_counts = $3
+		SET status = 'completed', raw_data = $2, resource_counts = $3, current_step = NULL
 		WHERE id = $1
 	`, auditID, []byte(rawData), []byte(resourceCounts))
 	if err != nil {
@@ -44,6 +44,17 @@ func CompleteAudit(ctx context.Context, pool *pgxpool.Pool, auditID string, rawD
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("audit %s not found", auditID)
+	}
+	return nil
+}
+
+// UpdateAuditStep sets a lightweight, human-readable progress string on a
+// running audit (e.g. "extracting acr (3/12)") for the dashboard's live
+// "Run Audit" view to poll and display. Best-effort by design at the call
+// site — a step-update failure should never fail the audit itself.
+func UpdateAuditStep(ctx context.Context, pool *pgxpool.Pool, auditID string, step string) error {
+	if _, err := pool.Exec(ctx, `UPDATE audits SET current_step = $2 WHERE id = $1`, auditID, step); err != nil {
+		return fmt.Errorf("updating audit step: %w", err)
 	}
 	return nil
 }
@@ -66,7 +77,7 @@ func SaveCostUsageData(ctx context.Context, pool *pgxpool.Pool, auditID string, 
 func FailAudit(ctx context.Context, pool *pgxpool.Pool, auditID string, errMsg string) error {
 	tag, err := pool.Exec(ctx, `
 		UPDATE audits
-		SET status = 'failed', error_message = $2
+		SET status = 'failed', error_message = $2, current_step = NULL
 		WHERE id = $1
 	`, auditID, errMsg)
 	if err != nil {

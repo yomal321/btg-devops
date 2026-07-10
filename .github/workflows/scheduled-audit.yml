@@ -2,14 +2,20 @@ name: Scheduled Azure Audit
 
 on:
   schedule:
-    # Runs every day at 08:00 UTC
-    - cron: '0 8 * * *'
+    # Runs every day at 07:30 UTC (1:00 PM Colombo) — analyzer runs 30 min
+    # later at 08:00 UTC (1:30 PM Colombo), see the btg-devops-mcp-analyzer
+    # routine's cron_expression.
+    - cron: '30 7 * * *'
   workflow_dispatch:
     inputs:
       trigger_label:
         description: 'Trigger type (leave as "manual" for manual runs)'
         required: false
         default: 'manual'
+      subscription_id:
+        description: 'Audit only this subscription ID (leave blank to audit all active subscriptions)'
+        required: false
+        default: ''
 
 jobs:
   collect:
@@ -52,7 +58,8 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
         run: |
           ./btg-devops collect \
-            --trigger "${{ steps.trigger.outputs.type }}"
+            --trigger "${{ steps.trigger.outputs.type }}" \
+            --subscription-id "${{ github.event.inputs.subscription_id }}"
 
       - name: Report failure
         if: failure()

@@ -187,6 +187,9 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 
 	for i, e := range allExtractors {
 		fmt.Fprintf(os.Stderr, "[%d/%d] Extracting %s...\n", i+1, total, e.key)
+		if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting %s (%d/%d)", e.key, i+1, total)); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+		}
 		data, err := e.run()
 		if err != nil {
 			extractErrors = append(extractErrors, fmt.Sprintf("%s: %v", e.key, err))
@@ -203,13 +206,24 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	// below), not merged into raw_data — keeping them out of that blob means
 	// reading cost/usage later never requires Postgres to parse the much
 	// larger 12-resource-type JSON just to pull out these two keys.
+	//
+	// current_step keeps counting from the extractor loop above (total+1,
+	// total+2) rather than restarting at 1/2 — the dashboard's step list
+	// (STEP_ORDER in app/audits/page.tsx) expects one continuous sequence of
+	// 14 steps, not 12 followed by a separate 1-of-2.
 	fmt.Fprintf(os.Stderr, "[1/2] Extracting cost...\n")
+	if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting cost (%d/%d)", total+1, total+2)); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	}
 	costData, err := extractors.ExtractCost(ctx, subID, cred)
 	if err != nil {
 		extractErrors = append(extractErrors, fmt.Sprintf("cost: %v", err))
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 	fmt.Fprintf(os.Stderr, "[2/2] Extracting usage...\n")
+	if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting usage (%d/%d)", total+2, total+2)); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	}
 	usageData, err := extractors.ExtractUsage(ctx, subID, cred)
 	if err != nil {
 		extractErrors = append(extractErrors, fmt.Sprintf("usage: %v", err))
@@ -246,6 +260,20 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		// mark it failed instead of leaving it stuck forever.
 		failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("completing audit failed: %v", err))
 		return fmt.Errorf("saving audit: %w", err)
+	}
+
+	// Auto-queue one analysis request per resource type that actually
+	// collected data, so the scheduled MCP-server analyzer has something to
+	// process without anyone clicking "Analyze" in the dashboard. Best-effort
+	// — a queuing failure here shouldn't fail an otherwise-successful audit.
+	var scopesToQueue []string
+	for _, e := range allExtractors {
+		if resourceCounts[e.key] > 0 {
+			scopesToQueue = append(scopesToQueue, e.key)
+		}
+	}
+	if err := db.QueueAnalysisRequests(ctx, pool, auditID, scopesToQueue); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	}
 
 	var costJSON, usageJSON json.RawMessage
