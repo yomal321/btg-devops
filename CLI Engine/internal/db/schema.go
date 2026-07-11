@@ -136,6 +136,29 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS cost_impact_usd      DOUBLE PRECIS
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS cost_impact_note     TEXT;
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS recommendation_steps TEXT[];
 
+-- fix_effort (spec 10, Phase 3) — how much work the fix itself costs, kept
+-- deliberately separate from severity (how bad the issue is). A finding can
+-- be Critical AND quick (flip a toggle) or Warning AND complex (needs a
+-- migration) — collapsing the two into one axis is what let "Critical" stop
+-- meaning "urgent" in the first place. Lets the UI surface a "quick wins"
+-- section: high-severity findings that are also cheap to fix.
+-- No CHECK constraint, same reasoning as findings.status above (not
+-- idempotent via ALTER..ADD CONSTRAINT) — validated in the dashboard API.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS fix_effort TEXT;
+
+-- finding_type (spec 10 section 5.4) — 'chain' marks a deep-research headline
+-- finding (spec 10 section 4 Stage 3): several individually low-severity facts
+-- reasoned together into one real attack path, e.g. a public/no-auth
+-- resource's managed identity reaching a Key Vault reaching production
+-- credentials. Reuses existing columns for the chain's content rather than
+-- adding new ones: affected_resources holds every resource in the chain in
+-- order, issue holds the full hop-by-hop narrative — 'chain' only flags
+-- that THIS finding should render as a distinct headline card at the top of
+-- the analysis page instead of blending into the regular findings list.
+-- NULL/absent means 'standard' (every finding before this feature, and
+-- every non-chain finding after it).
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS finding_type TEXT;
+
 -- analysis_requests is the queue behind the MCP-server/Claude-Code-orchestrator
 -- flow (spec 8): the dashboard writes a pending row instead of calling an LLM
 -- API directly, a scheduled Claude Code agent claims it via the MCP server,

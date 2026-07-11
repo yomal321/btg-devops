@@ -3,9 +3,24 @@ import { insertFinding, findFindingsByAudit, deleteFindingsByScope, findPriorLiv
 import { ChatMessage, Finding } from '../types'
 import { callLLMWithFallback, LLMProvider, LLMMessage } from './llm'
 import { buildUsageGroups } from './usage'
+import { checklistForType } from './analysisChecklists'
 
 const DEFAULT_PROVIDER: LLMProvider = 'claude'
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
+
+// Shared severity/evidence rules (spec 10, Phase 1) — appended to every
+// scope's instruction in getScopedAuditData, so both the direct-LLM path
+// (analyzeWithLLM, below) and the MCP-server/scheduled-agent path (which
+// only ever sees the instruction text via get_audit_data, never this file's
+// prompt template) apply the same rubric. Kept as one constant instead of
+// duplicating it per scope branch to avoid the two paths drifting apart.
+export const SEVERITY_RUBRIC = `Severity rubric — apply strictly, do not default to Critical for anything security-related:
+- Critical: actively exploitable right now, data exposed to the internet, or bleeding significant money today (e.g. public blob access on an account holding real data; credentials sitting in plain app settings).
+- Warning: a real risk or real waste, but it needs another factor to become an incident (e.g. key rotation not enabled, missing backup, RU/s provisioned far above actual usage).
+- Info: a deviation from best practice with no current impact.
+Tie-break rule: if you are unsure between two severities, pick the lower one. A finding is not Critical just because it is security-related.
+
+Evidence requirement: every finding's "issue" text must cite the exact field/value from the data that proves it (e.g. "publicNetworkAccess is Enabled and ipRules is empty"). If you cannot point to a specific field/value proving the issue, do not report it — do not guess or report something generic.`
 
 export interface AnalysisFinding {
   severity: 'Critical' | 'Warning' | 'Info'
@@ -42,6 +57,19 @@ export interface AnalysisFinding {
   // renders. This is the field the model should populate; `recommendation`
   // above is filled in from this automatically.
   recommendation_steps?: string[]
+  // Cost to FIX, deliberately separate from severity (cost of the PROBLEM) —
+  // spec 10 Phase 3. A Critical finding can be a one-toggle fix; a Warning
+  // can require a migration. Powers the "Quick wins" UI section (Critical/
+  // Warning findings that are also cheap to fix, surfaced first).
+  fix_effort?: 'quick' | 'moderate' | 'complex'
+  // 'chain' marks a deep-research headline finding (spec 10 §4 Stage 3) —
+  // several individually low-severity facts reasoned together into one real
+  // attack path. Its content reuses the fields above (affected_resources for
+  // the chain's resources in order, issue for the hop-by-hop narrative) —
+  // this flag only controls rendering: a chain finding gets a distinct
+  // headline card at the top of the analysis page instead of blending into
+  // the regular list. Absent/undefined means a standard finding.
+  finding_type?: 'chain' | 'standard'
 }
 
 export interface ClaudeAnalysis {
@@ -49,6 +77,12 @@ export interface ClaudeAnalysis {
   findings: AnalysisFinding[]
   generated_at: string
   model: string
+  // Data the agent needed but couldn't get from get_audit_data (spec 10 §5.5/
+  // §6's feedback loop) — e.g. "couldn't verify Key Vault access — access
+  // policies not in audit data". Only meaningful for a 'deep' scope analysis
+  // (the multi-stage playbook is what requires recording this); absent for
+  // ordinary single-resource-type/"all" analyses.
+  data_gaps?: string[]
 }
 
 /** claude_analysis JSONB column shape: either the full-audit analysis, or one
@@ -106,7 +140,7 @@ Respond with ONLY a JSON object in this exact shape, no other text:
   "summary": "2-3 sentence overall assessment",
   "findings": [
     {
-      "severity": "Critical" | "Warning" | "Info",
+      "severity": "Critical" | "Warning" | "Info" — must follow the severity rubric above exactly; do not report a finding you cannot justify against it,
       "category": "Security" | "Cost Waste" | "Misconfiguration" | "Governance" | "Performance",
       "resource_type": "one of the resource type keys from the data (e.g. storage, iam, nsg)",
       "resource_name": "the specific resource affected — for account-based types (cosmosdb, storage, appserviceplan) this is the ACCOUNT/PLAN name, not the individual database/container/app. For a finding shared identically across multiple accounts, set this to any one affected account name (it is not shown) and list every affected account in affected_resources instead — never bolt a count or parenthetical onto this field, e.g. never \"acct1 (and 4 other accounts)\".",
@@ -115,8 +149,9 @@ Respond with ONLY a JSON object in this exact shape, no other text:
       "affected_resources": ["When the exact same issue affects multiple resources — including multiple ACCOUNTS for account-based resource types (cosmosdb, storage, appserviceplan) — list every affected resource/account name here and write ONE finding for the whole pattern instead of one finding per resource/account. Omit this field entirely for issues unique to a single resource/account."],
       "cost_impact_usd": "estimated monthly dollar impact as a number, if this issue has one — omit if not applicable",
       "cost_impact_note": "a short label instead of cost_impact_usd when the issue has no dollar figure, e.g. \\"security risk\\" — always include ONE of cost_impact_usd or cost_impact_note, never omit both",
-      "issue": "what the problem is, concretely",
-      "recommendation_steps": ["short numbered fix step, imperative, one concrete action per step — max 4 steps, never a paragraph"]
+      "issue": "what the problem is, concretely — MUST cite the exact field/value from the data that proves it (per the evidence requirement above), e.g. \\"publicNetworkAccess is Enabled and ipRules is empty, so the account accepts traffic from any IP\\"",
+      "recommendation_steps": ["short numbered fix step, imperative, one concrete action per step — max 4 steps, never a paragraph"],
+      "fix_effort": "quick" | "moderate" | "complex" — quick means a single CLI command or portal toggle with no downtime; moderate needs some planning/testing; complex needs a migration, downtime, or code change. This is about the cost to FIX, not how bad the issue is — a Critical finding can still be "quick"
     }
   ]
 }`,
@@ -210,6 +245,8 @@ async function saveFindings(auditId: string, findings: AnalysisFinding[], scope:
       cost_impact_usd: f.cost_impact_usd,
       cost_impact_note: f.cost_impact_note || undefined,
       recommendation_steps: f.recommendation_steps && f.recommendation_steps.length > 0 ? f.recommendation_steps : undefined,
+      fix_effort: f.fix_effort || undefined,
+      finding_type: f.finding_type || undefined,
       issue: f.issue || '',
       recommendation: f.recommendation || '',
     }, scope, {
@@ -243,24 +280,29 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
   const audit = await findAuditById(auditId)
   if (!audit) return { error: 'audit not found', status: 404 }
 
-  if (scope === 'all') {
+  if (scope === 'all' || scope === 'deep') {
     if (!audit.raw_data || Object.keys(audit.raw_data).length === 0) {
       return { error: 'audit has no resource data to analyze', status: 400 }
     }
-    // "Analyze All" sends the complete picture — cost/usage are merged back
-    // in here even though they're stored in their own DB columns, so the
-    // full-subscription analysis doesn't lose visibility into spend and
-    // utilization data.
+    // "Analyze All" and "deep" both send the complete picture — cost/usage
+    // are merged back in here even though they're stored in their own DB
+    // columns, so the full-subscription analysis doesn't lose visibility
+    // into spend and utilization data. They differ only in `instruction`:
+    // "all" is a single-pass generic sweep, "deep" points the agent at the
+    // multi-stage playbook (spec 10 §4/§5.1) — map, correlate, chain,
+    // judge-in-context, verify — instead of a one-shot answer. Both reuse
+    // this one merge so they can't drift on what "the complete picture"
+    // means.
     const costUsage = await findAuditCostUsageRaw(auditId)
     const fullData = {
       ...audit.raw_data,
       ...(costUsage?.cost ? { cost: costUsage.cost } : {}),
       ...(costUsage?.usage ? { usage: costUsage.usage } : {}),
     }
-    return {
-      data: fullData,
-      instruction: 'Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).',
-    }
+    const instruction = scope === 'deep'
+      ? `This is a DEEP RESEARCH request — do not answer in one pass. Follow the 5-stage deep-research playbook at spec/agent/deep-research-playbook.md exactly: (1) build a map of environments/regions/application groupings/spend before judging anything, (2) correlate configuration × cost × usage per resource for hidden-waste findings, (3) chain individually low-severity facts into attack paths (e.g. a public/no-auth resource's managed identity reaching a Key Vault reaching production credentials) and report each chain as ONE finding, (4) judge every candidate's severity against the environment map and prior audit history, not category alone, (5) actively try to refute every Critical before committing to it, then save a SHORT list of well-evidenced headline findings followed by routine findings — record anything you needed but couldn't find as a "Data gaps" paragraph in the summary. If you cannot read that file, apply this same process from this instruction alone.\n\n${SEVERITY_RUBRIC}`
+      : `Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).\n\n${SEVERITY_RUBRIC}`
+    return { data: fullData, instruction }
   }
 
   // cost/usage live in their own DB columns, not raw_data — see
@@ -285,11 +327,17 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
   } else {
     resourceData = (audit.raw_data as Record<string, unknown> | undefined)?.[scope]
     instruction = `Analyze the "${scope}" resources in this Azure subscription as a senior DevOps engineer would. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues specific to this resource type.`
+    // Best-practice checklist (spec 10, Phase 2) — only applies to a single
+    // resource-type scope, since it's keyed by that type. "all"/"cost"/
+    // "usage:*" scopes above don't get one; deep research (spec 10 §4) will
+    // eventually sweep every type's checklist itself.
+    const checklist = checklistForType(scope)
+    if (checklist) instruction += `\n\n${checklist}`
   }
   if (resourceData === undefined || resourceData === null) {
     return { error: `no data for resource type "${scope}" in this audit`, status: 400 }
   }
-  return { data: { [scope]: resourceData }, instruction }
+  return { data: { [scope]: resourceData }, instruction: `${instruction}\n\n${SEVERITY_RUBRIC}` }
 }
 
 // Persists a finished analysis for a scope — merges it into the cached

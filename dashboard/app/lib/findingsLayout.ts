@@ -42,6 +42,8 @@ export interface DisplayFinding {
   issue: string
   recommendation: string
   recommendation_steps?: string[] | null
+  fix_effort?: 'quick' | 'moderate' | 'complex' | null
+  finding_type?: 'chain' | 'standard' | null
   id?: string
   status?: 'open' | 'resolved' | 'dismissed'
   first_seen_at?: string

@@ -3,7 +3,7 @@ import { Finding } from '../types'
 
 const FINDING_COLS = `id, audit_id, severity, category, resource_type, resource_name, resource_group,
             child_resource_name, affected_resources, cost_impact_usd, cost_impact_note, recommendation_steps,
-            issue, recommendation, scope, status, first_seen_at, resolved_at, created_at`
+            fix_effort, finding_type, issue, recommendation, scope, status, first_seen_at, resolved_at, created_at`
 
 export async function findFindingsByAudit(auditId: string, scope?: string): Promise<Finding[]> {
   const params: unknown[] = [auditId]
@@ -26,7 +26,7 @@ export async function insertFinding(
   finding: {
     severity: string; category?: string; resource_type: string; resource_name: string; resource_group?: string
     child_resource_name?: string; affected_resources?: string[]; cost_impact_usd?: number; cost_impact_note?: string
-    recommendation_steps?: string[]; issue: string; recommendation: string
+    recommendation_steps?: string[]; fix_effort?: string; finding_type?: string; issue: string; recommendation: string
   },
   scope?: string,
   lifecycle?: { status?: string; firstSeenAt?: Date }
@@ -34,13 +34,14 @@ export async function insertFinding(
   const { rows } = await pool.query(
     `INSERT INTO findings (audit_id, severity, category, resource_type, resource_name, resource_group,
                             child_resource_name, affected_resources, cost_impact_usd, cost_impact_note, recommendation_steps,
-                            issue, recommendation, scope, status, first_seen_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+                            fix_effort, finding_type, issue, recommendation, scope, status, first_seen_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
     [
       auditId, finding.severity, finding.category || null, finding.resource_type, finding.resource_name,
       finding.resource_group || null,
       finding.child_resource_name || null, finding.affected_resources || null,
       finding.cost_impact_usd ?? null, finding.cost_impact_note || null, finding.recommendation_steps || null,
+      finding.fix_effort || null, finding.finding_type || null,
       finding.issue, finding.recommendation, scope || null,
       lifecycle?.status || 'open', lifecycle?.firstSeenAt || new Date(),
     ]
@@ -167,6 +168,58 @@ export async function findSeverityCountsByAudits(
     out[row.audit_id][key] = row.count
   }
   return out
+}
+
+export interface HistoryFinding {
+  resource_type: string
+  resource_name: string
+  category: string | null
+  severity: string
+  status: string
+  scope: string | null
+  first_seen_at: Date
+  resolved_at: Date | null
+  audit_created_at: Date
+}
+
+// Every finding (any status — open, dismissed, resolved) across every past
+// audit of the SAME subscription as auditId, oldest first. Backs the
+// audit-history MCP tool (spec 10 §5.3/8.3) so the deep-research agent's
+// Stage 4 ("judge in context") can see whether an issue has existed for
+// multiple audits unresolved, or was already flagged and fixed/dismissed,
+// instead of only ever seeing the current audit's snapshot. Deliberately
+// broader than findPriorLiveFindings above (which only returns OPEN/
+// DISMISSED rows strictly older than auditId, for the lifecycle-carry-
+// forward logic in saveFindings) — history is read-only context for the
+// agent's reasoning, not something that feeds back into a write path, so it
+// includes resolved rows and the current audit too.
+// scope is optional: omit it to see history across every scope (needed for
+// a "deep" request, which has no single matching scope in prior audits from
+// before this feature existed).
+export async function findSubscriptionFindingHistory(
+  auditId: string,
+  scope?: string,
+  limit = 300
+): Promise<HistoryFinding[]> {
+  const params: unknown[] = [auditId]
+  let where = `a.subscription_id = cur.subscription_id AND a.created_at <= cur.created_at`
+  if (scope) {
+    params.push(scope)
+    where += ` AND f.scope = $${params.length}`
+  }
+  params.push(limit)
+  const { rows } = await pool.query(
+    `SELECT f.resource_type, f.resource_name, f.category, f.severity, f.status, f.scope,
+            f.first_seen_at, f.resolved_at, a.created_at AS audit_created_at
+     FROM findings f
+     JOIN audits a   ON a.id = f.audit_id
+     JOIN audits cur ON cur.id = $1
+     WHERE ${where}
+     ORDER BY a.created_at ASC
+     LIMIT $${params.length}`,
+    params
+  )
+  return rows
 }
 
 export async function findFindingById(findingId: number): Promise<Finding | null> {

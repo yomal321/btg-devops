@@ -48,6 +48,8 @@ export interface Finding {
   cost_impact_usd: number | null
   cost_impact_note: string | null
   recommendation_steps: string[] | null
+  fix_effort: 'quick' | 'moderate' | 'complex' | null
+  finding_type: 'chain' | 'standard' | null
   issue: string
   recommendation: string
   scope: string | null

@@ -46,7 +46,10 @@ func triggerAnalyzerRoutine(ctx context.Context) {
 	}
 
 	url := fmt.Sprintf("https://api.anthropic.com/v1/claude_code/routines/%s/fire", routineID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
+	body, _ := json.Marshal(map[string]string{
+		"text": "A new audit just finished collecting and queued analysis requests — please process them now instead of waiting for the daily schedule.",
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: building analyzer trigger request: %v\n", err)
 		return
@@ -54,6 +57,7 @@ func triggerAnalyzerRoutine(ctx context.Context) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-beta", "experimental-cc-routine-2026-04-01")
+	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
