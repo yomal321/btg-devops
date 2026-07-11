@@ -4,21 +4,21 @@
 > architecture this runs inside) and `spec/handoff/10-deep-research-analysis.md` (the strategy this
 > file implements — task 5.1 in that spec's component list).
 >
-> This file is what the scheduled Claude Code agent is pointed at for a `deep`-scope
-> `analysis_request` (spec 10 §5.2 — the "Deep Research" button/scope is built; see
-> `dashboard/app/components/AnalysisPanel.tsx` and `getScopedAuditData` in `claude.ts`). For an
-> ordinary single-resource-type or "all" request, the agent still just uses `getScopedAuditData`'s
-> returned `instruction` directly (severity rubric + checklist), one fetch, one answer — this
-> playbook's multi-stage process is ONLY for `scope: 'deep'`.
+> This file is what EVERY `analysis_request` points the scheduled Claude Code agent at — a single
+> resource type, "cost", "usage:<type>", or "all" (spec 10 §4, updated: deep research is no longer
+> a separate opt-in scope; every Analyze request always follows this 5-stage process, no exceptions
+> — see `getScopedAuditData` in `claude.ts`, which appends `DEEP_RESEARCH_DIRECTIVE` to every
+> scope's instruction). There is no one-shot/fast mode left to fall back to.
 
 ## Preconditions
 
 - You have MCP tools: `list_pending_requests`, `get_audit_data(auditId, scope)`,
   `get_audit_history(auditId, scope?, limit?)`, `save_analysis`.
-- A `deep`-scope request means: investigate the WHOLE subscription for this audit, not one
-  resource type. Call `get_audit_data` once per resource type (and for `cost` / each
-  `usage:<type>`) as needed — you are not limited to one fetch. Hold everything in context across
-  calls before writing any conclusion.
+- Whatever scope this request names (a resource type, "cost", "usage:<type>", or "all"), do not
+  limit yourself to the data `get_audit_data` returned for that scope alone — call `get_audit_data`
+  again with a DIFFERENT scope as needed to build the context Stage 1 requires (other resource
+  types, cost, usage, or "all" for the complete picture). You are not limited to one fetch. Hold
+  everything in context across calls before writing any conclusion.
 - Every severity you assign must follow the rubric returned in each `get_audit_data` call's
   `instruction` field (Critical = exploitable/exposed/bleeding money now; Warning = real risk
   needing another factor; Info = best-practice deviation with no current impact; tie-break low).

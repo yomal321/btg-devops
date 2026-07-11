@@ -22,6 +22,13 @@ Tie-break rule: if you are unsure between two severities, pick the lower one. A 
 
 Evidence requirement: every finding's "issue" text must cite the exact field/value from the data that proves it (e.g. "publicNetworkAccess is Enabled and ipRules is empty"). If you cannot point to a specific field/value proving the issue, do not report it — do not guess or report something generic.`
 
+// Every Analyze request — a single resource type, "all", "cost", or
+// "usage:<type>" — follows the same 5-stage deep-research process; there is
+// no separate fast/one-shot mode (decision superseding the earlier
+// deep-only 'deep' scope). Appended to every branch's instruction in
+// getScopedAuditData alongside SEVERITY_RUBRIC.
+export const DEEP_RESEARCH_DIRECTIVE = `Follow the 5-stage deep-research playbook at spec/agent/deep-research-playbook.md exactly — do not answer in one pass, even for a narrow scope: (1) build a map of environments/regions/application groupings/spend before judging anything — call get_audit_data again with a different scope (another resource type, "cost", "usage:<type>", or "all") as needed to gather context beyond what this request's own data covers; (2) correlate configuration × cost × usage per resource for hidden-waste findings; (3) chain individually low-severity facts into real attack paths (e.g. a public/no-auth resource's managed identity reaching a Key Vault reaching production credentials) and report each chain as ONE finding with finding_type set to "chain"; (4) judge every candidate's severity against the environment map and get_audit_history's trend data, never from category alone; (5) actively try to refute every Critical before committing to it, then save a SHORT list of well-evidenced findings — record anything you needed but couldn't find as short strings in a data_gaps array. If you cannot read the playbook file, apply this same process from this instruction alone.`
+
 export interface AnalysisFinding {
   severity: 'Critical' | 'Warning' | 'Info'
   category: string
@@ -280,28 +287,25 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
   const audit = await findAuditById(auditId)
   if (!audit) return { error: 'audit not found', status: 404 }
 
+  // Every scope always gets DEEP_RESEARCH_DIRECTIVE + SEVERITY_RUBRIC —
+  // there is no separate fast/one-shot mode (decision superseding the
+  // earlier standalone 'deep' scope; 'deep' is kept as an accepted alias of
+  // 'all' below purely so any already-saved analyses/requests from before
+  // this change still resolve, not because it's offered anywhere anymore).
   if (scope === 'all' || scope === 'deep') {
     if (!audit.raw_data || Object.keys(audit.raw_data).length === 0) {
       return { error: 'audit has no resource data to analyze', status: 400 }
     }
-    // "Analyze All" and "deep" both send the complete picture — cost/usage
-    // are merged back in here even though they're stored in their own DB
-    // columns, so the full-subscription analysis doesn't lose visibility
-    // into spend and utilization data. They differ only in `instruction`:
-    // "all" is a single-pass generic sweep, "deep" points the agent at the
-    // multi-stage playbook (spec 10 §4/§5.1) — map, correlate, chain,
-    // judge-in-context, verify — instead of a one-shot answer. Both reuse
-    // this one merge so they can't drift on what "the complete picture"
-    // means.
+    // Cost/usage are merged back in here even though they're stored in
+    // their own DB columns, so the full-subscription analysis doesn't lose
+    // visibility into spend and utilization data.
     const costUsage = await findAuditCostUsageRaw(auditId)
     const fullData = {
       ...audit.raw_data,
       ...(costUsage?.cost ? { cost: costUsage.cost } : {}),
       ...(costUsage?.usage ? { usage: costUsage.usage } : {}),
     }
-    const instruction = scope === 'deep'
-      ? `This is a DEEP RESEARCH request — do not answer in one pass. Follow the 5-stage deep-research playbook at spec/agent/deep-research-playbook.md exactly: (1) build a map of environments/regions/application groupings/spend before judging anything, (2) correlate configuration × cost × usage per resource for hidden-waste findings, (3) chain individually low-severity facts into attack paths (e.g. a public/no-auth resource's managed identity reaching a Key Vault reaching production credentials) and report each chain as ONE finding, (4) judge every candidate's severity against the environment map and prior audit history, not category alone, (5) actively try to refute every Critical before committing to it, then save a SHORT list of well-evidenced headline findings followed by routine findings — record anything you needed but couldn't find as a "Data gaps" paragraph in the summary. If you cannot read that file, apply this same process from this instruction alone.\n\n${SEVERITY_RUBRIC}`
-      : `Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).\n\n${SEVERITY_RUBRIC}`
+    const instruction = `Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).\n\n${DEEP_RESEARCH_DIRECTIVE}\n\n${SEVERITY_RUBRIC}`
     return { data: fullData, instruction }
   }
 
@@ -328,16 +332,15 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
     resourceData = (audit.raw_data as Record<string, unknown> | undefined)?.[scope]
     instruction = `Analyze the "${scope}" resources in this Azure subscription as a senior DevOps engineer would. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues specific to this resource type.`
     // Best-practice checklist (spec 10, Phase 2) — only applies to a single
-    // resource-type scope, since it's keyed by that type. "all"/"cost"/
-    // "usage:*" scopes above don't get one; deep research (spec 10 §4) will
-    // eventually sweep every type's checklist itself.
+    // resource-type scope, since it's keyed by that type; folded into
+    // Stage 1/2 of the deep-research playbook below.
     const checklist = checklistForType(scope)
     if (checklist) instruction += `\n\n${checklist}`
   }
   if (resourceData === undefined || resourceData === null) {
     return { error: `no data for resource type "${scope}" in this audit`, status: 400 }
   }
-  return { data: { [scope]: resourceData }, instruction: `${instruction}\n\n${SEVERITY_RUBRIC}` }
+  return { data: { [scope]: resourceData }, instruction: `${instruction}\n\n${DEEP_RESEARCH_DIRECTIVE}\n\n${SEVERITY_RUBRIC}` }
 }
 
 // Persists a finished analysis for a scope — merges it into the cached

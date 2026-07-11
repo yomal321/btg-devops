@@ -34,11 +34,11 @@ export interface AnalysisStore {
 }
 
 const ALL_SCOPE = 'all'
-// Whole-subscription, multi-stage investigation (spec 10 §4/§5.2) — distinct
-// from ALL_SCOPE's single-pass sweep. Kept as its own scope value (not part
-// of buildScopeGroups in lib/scopes.ts) since it's Analyze-only, not shared
-// with the Chat panel that consumes the same scope-group builder.
-const DEEP_SCOPE = 'deep'
+// Every Analyze scope now always runs the full 5-stage deep-research
+// process (spec 10 §4) — there is no separate fast/one-shot mode and no
+// dedicated "deep" scope to pick anymore (superseded the earlier standalone
+// DEEP_SCOPE option). getScopedAuditData still accepts scope 'deep' as a
+// backward-compat alias of 'all' for any analysis saved before this change.
 const POLL_INTERVAL_MS = 7000
 
 function sleep(ms: number) {
@@ -149,7 +149,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   const [running, setRunning]   = useState(false)
   const [error, setError]       = useState('')
   const [showAllConfirm, setShowAllConfirm] = useState(false)
-  const [showDeepConfirm, setShowDeepConfirm] = useState(false)
   const [sevFilter, setSevFilter]   = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<string>('all')
 
@@ -223,7 +222,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
 
   function handleAnalyzeClick() {
     if (scope === ALL_SCOPE) setShowAllConfirm(true)
-    else if (scope === DEEP_SCOPE) setShowDeepConfirm(true)
     else analyzeScope(scope)
   }
 
@@ -236,7 +234,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
     }
   }
 
-  const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scope === DEEP_SCOPE ? 'Deep Research' : scopeLabel(scope, scopeGroups)
+  const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)
 
   // Exports exactly what's currently on screen (respecting the active
   // severity/type filters), not the full unfiltered scope — filtering to
@@ -478,9 +476,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             {resourceTypes.length > 0 && (
               <option value={ALL_SCOPE}>— All Resources (all {resourceTypes.length} types) —</option>
             )}
-            {resourceTypes.length > 0 && (
-              <option value={DEEP_SCOPE}>— Deep Research (whole subscription, scheduled agent) —</option>
-            )}
           </select>
         </div>
       )}
@@ -499,17 +494,13 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
           <p style={{ fontSize: '0.85rem', color: 'var(--t2)', marginBottom: '1rem' }}>
             {scope === ALL_SCOPE
-              ? 'Queue the full audit (all resource types) for analysis in one request.'
-              : scope === DEEP_SCOPE
-              ? 'Queue a deep, multi-stage investigation of the whole subscription — maps the environment, correlates cost/usage/config, and chains issues into real attack paths instead of a single-pass sweep.'
+              ? 'Queue a deep, multi-stage investigation of the full audit (all resource types) — maps the environment, correlates cost/usage/config, and chains issues into real attack paths instead of a single-pass sweep.'
               : resourceTypes.includes(scope)
-              ? `Queue only the "${scope}" resources for a focused analysis.`
-              : `Queue the ${scopeLabel(scope, scopeGroups)} for a focused analysis.`}
+              ? `Queue a deep, multi-stage investigation of the "${scope}" resources.`
+              : `Queue a deep, multi-stage investigation of the ${scopeLabel(scope, scopeGroups)}.`}
           </p>
           {error && <p style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '0.75rem' }}>{error}</p>}
-          <button className="btn-primary" onClick={handleAnalyzeClick}>
-            {scope === DEEP_SCOPE ? 'Run Deep Research' : 'Analyze'}
-          </button>
+          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze</button>
         </div>
       )}
 
@@ -522,12 +513,10 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             borderRadius: '50%', animation: 'spin 0.8s linear infinite',
           }} />
           <p style={{ fontSize: '0.82rem', color: 'var(--t2)' }}>
-            {scope === ALL_SCOPE ? 'Full audit queued for analysis…' : scope === DEEP_SCOPE ? 'Deep research queued…' : `${scopeLabel(scope, scopeGroups)} queued for analysis…`}
+            {scope === ALL_SCOPE ? 'Full audit queued for analysis…' : `${scopeLabel(scope, scopeGroups)} queued for analysis…`}
           </p>
           <p style={{ fontSize: '0.72rem', color: 'var(--t4)', marginTop: '0.25rem' }}>
-            {scope === DEEP_SCOPE
-              ? 'A scheduled agent works through a multi-stage investigation — this can take longer than a regular analysis.'
-              : 'A scheduled agent picks this up shortly — usually ready within a few minutes.'}
+            A scheduled agent works through a multi-stage investigation — this can take longer than a quick check.
           </p>
         </div>
       )}
@@ -739,36 +728,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
                 onClick={() => { setShowAllConfirm(false); analyzeScope(ALL_SCOPE) }}
               >
                 Yes, Analyze All
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* "Deep Research" confirmation dialog */}
-      {showDeepConfirm && (
-        <Modal title="Run Deep Research?" onClose={() => setShowDeepConfirm(false)}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{
-              display: 'flex', gap: '0.625rem', padding: '0.75rem 0.875rem',
-              background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 8,
-            }}>
-              <TriangleAlert size={17} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
-              <p style={{ fontSize: '0.82rem', color: 'var(--t2)', lineHeight: 1.55 }}>
-                This queues a multi-stage investigation across the whole subscription — mapping
-                environments, correlating cost/usage/config, and chaining issues into real attack
-                paths — instead of a single-pass sweep. It takes meaningfully longer than a regular
-                Analyze and is meant to be run occasionally (e.g. daily/weekly), not on every click.
-              </p>
-            </div>
-            {error && <p style={{ color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>}
-            <div style={{ display: 'flex', gap: '0.625rem', justifyContent: 'flex-end' }}>
-              <button className="btn-ghost" onClick={() => setShowDeepConfirm(false)}>Cancel</button>
-              <button
-                className="btn-primary"
-                onClick={() => { setShowDeepConfirm(false); analyzeScope(DEEP_SCOPE) }}
-              >
-                Yes, Run Deep Research
               </button>
             </div>
           </div>
