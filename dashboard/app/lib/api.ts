@@ -107,7 +107,17 @@ export const api = {
     }),
 
   topFindings: (limit = 8) =>
-    apiFetch<import('../types').Finding[]>(`/api/findings/top?limit=${limit}`),
+    apiFetch<{ findings: import('../types').Finding[]; hasAnyFindings: boolean }>(`/api/findings/top?limit=${limit}`),
+
+  searchFindings: (q: string, limit = 8) =>
+    apiFetch<{ findings: import('../types').Finding[] }>(`/api/findings/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+
+  severityCounts: (auditIds: string[]) =>
+    auditIds.length === 0
+      ? Promise.resolve({} as Record<string, { critical: number; warning: number; info: number }>)
+      : apiFetch<Record<string, { critical: number; warning: number; info: number }>>(
+          `/api/findings/severity-counts?auditIds=${auditIds.map(encodeURIComponent).join(',')}`
+        ),
 
   listChatThreads: (auditId: string) =>
     apiFetch<import('../types').ChatThread[]>(`/api/audits/${auditId}/chat/threads`),

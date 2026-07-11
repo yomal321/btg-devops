@@ -1,9 +1,20 @@
-import { findFindingsByAudit, insertFinding, findFindingById, updateFinding, deleteFinding, findTopFindings } from '../models/findings'
+import { findFindingsByAudit, insertFinding, findFindingById, updateFinding, deleteFinding, findTopFindings, hasAnyFindings, findSeverityCountsByAudits, searchOpenFindings } from '../models/findings'
 import { Finding } from '../types'
 
 export async function topFindingsController(limit = 8) {
-  const findings = await findTopFindings(limit)
-  return { data: findings, status: 200 }
+  const [findings, anyFindings] = await Promise.all([findTopFindings(limit), hasAnyFindings()])
+  return { data: { findings, hasAnyFindings: anyFindings }, status: 200 }
+}
+
+export async function severityCountsController(auditIds: string[]) {
+  const counts = await findSeverityCountsByAudits(auditIds)
+  return { data: counts, status: 200 }
+}
+
+export async function searchFindingsController(q: string, limit = 8) {
+  if (q.trim().length < 2) return { data: { findings: [] }, status: 200 }
+  const findings = await searchOpenFindings(q.trim(), limit)
+  return { data: { findings }, status: 200 }
 }
 
 export async function listFindingsController(auditId: string, scope?: string) {

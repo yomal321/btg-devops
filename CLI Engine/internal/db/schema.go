@@ -91,6 +91,51 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ;
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS resolved_at   TIMESTAMPTZ;
 UPDATE findings SET first_seen_at = created_at WHERE first_seen_at IS NULL;
 
+-- resource_group lets the dashboard group findings the same way the Raw
+-- Resource Data view does. Display-only — NOT part of the cross-audit
+-- identity key (findingKey in claude.ts), since it's the LLM's own
+-- transcription of a value it read off the resource data and could be
+-- worded slightly differently between runs. NULL for pre-existing rows and
+-- for scopes (cost/usage/all) where a single finding can't cleanly map to
+-- one resource group.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS resource_group TEXT;
+
+-- Fields backing the grouped Analysis Results UI (analysis-ui spec):
+--
+-- child_resource_name: for account-based resource types (Cosmos DB, Storage,
+-- App Service Plan), resource_name holds the ACCOUNT/plan name and this
+-- holds the specific child (database/container/app) the finding is about.
+-- NULL for flat resource types and for account-level findings with no
+-- single child.
+--
+-- affected_resources: for flat resource types, one finding can describe an
+-- issue PATTERN shared by many resources (e.g. "admin user enabled" across
+-- 12 ACRs) — this array lists every resource name affected, so the UI can
+-- render one card with tags instead of one card per resource. Deliberately
+-- NOT derived by clustering on issue text after the fact — LLM wording
+-- varies run to run (see findingKey's comment in claude.ts), so this is
+-- populated directly by the model at analysis time instead.
+--
+-- cost_impact_usd / cost_impact_note: estimated monthly dollar impact, or a
+-- short text label (e.g. "security risk") when no dollar figure applies —
+-- the UI must always show one or the other, never leave the slot blank.
+--
+-- recommendation_steps: the fix as an array of short, numbered steps.
+-- Additive alongside the legacy recommendation TEXT column (kept, and
+-- still populated as a joined fallback) rather than changing that column's
+-- type, so anything still reading recommendation as a plain string
+-- (exports, the summary email) keeps working unchanged.
+-- DOUBLE PRECISION, not NUMERIC — node-postgres returns NUMERIC columns as
+-- strings (to avoid silent precision loss), which would force every reader
+-- of this column to remember to parse it. A dollar estimate doesn't need
+-- NUMERIC's exact decimal precision, so float8 avoids that footgun and
+-- comes back as a plain JS number.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS child_resource_name  TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS affected_resources   TEXT[];
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS cost_impact_usd      DOUBLE PRECISION;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS cost_impact_note     TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS recommendation_steps TEXT[];
+
 -- analysis_requests is the queue behind the MCP-server/Claude-Code-orchestrator
 -- flow (spec 8): the dashboard writes a pending row instead of calling an LLM
 -- API directly, a scheduled Claude Code agent claims it via the MCP server,
