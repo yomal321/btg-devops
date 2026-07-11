@@ -23,10 +23,16 @@ type AppServiceMetrics struct {
 	PeriodDays    int     `json:"period_days"`
 }
 
-// AppServiceEntry combines clean config JSON with traffic metrics for one app.
+// AppServiceEntry combines clean config JSON with traffic metrics and
+// per-site security enrichment (spec 11 §1) for one app.
 type AppServiceEntry struct {
-	Config  json.RawMessage   `json:"config"`
+	Config json.RawMessage `json:"config"`
+	SiteEnrichment
 	Metrics AppServiceMetrics `json:"metrics"`
+	// Set when the Azure Monitor call failed — metrics values are then
+	// unknown, NOT genuinely zero. Analyzers must treat zeros with this
+	// field present as "not collected" (spec 11 §3).
+	MetricsError string `json:"metrics_error,omitempty"`
 }
 
 // AppServiceData holds clean extracted data for all app services.
@@ -78,6 +84,11 @@ func ExtractAppService(ctx context.Context, subID string, cred azcore.TokenCrede
 	timespan := fmt.Sprintf("%s/%s", startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 	metricNames := "Requests,BytesReceived,BytesSent,Http2xx,Http4xx,Http5xx"
 	aggregation := "Total"
+	// Without an explicit interval, a 30-day timespan exceeds Azure
+	// Monitor's data-point limit and the call fails — which used to be
+	// swallowed silently, reporting fake zeros for every app (the exact
+	// unreliable-metrics gap the analyzer flagged, spec 11 §3).
+	interval := "P1D"
 
 	var entries []AppServiceEntry
 
@@ -90,12 +101,16 @@ func ExtractAppService(ctx context.Context, subID string, cred azcore.TokenCrede
 
 		// Fetch metrics from Azure Monitor
 		metrics := AppServiceMetrics{PeriodDays: 30}
+		metricsError := ""
 		resp, err := metricsClient.List(ctx, s.resourceID, &armmonitor.MetricsClientListOptions{
 			Timespan:    &timespan,
 			Metricnames: &metricNames,
 			Aggregation: &aggregation,
+			Interval:    &interval,
 		})
-		if err == nil {
+		if err != nil {
+			metricsError = err.Error()
+		} else {
 			for _, metric := range resp.Value {
 				if metric.Name == nil || metric.Name.Value == nil {
 					continue
@@ -119,8 +134,10 @@ func ExtractAppService(ctx context.Context, subID string, cred azcore.TokenCrede
 		}
 
 		entries = append(entries, AppServiceEntry{
-			Config:  json.RawMessage(cleanConfig),
-			Metrics: metrics,
+			Config:         json.RawMessage(cleanConfig),
+			SiteEnrichment: EnrichSite(ctx, webClient, extractResourceGroup(s.resourceID), derefStr(s.site.Name)),
+			Metrics:        metrics,
+			MetricsError:   metricsError,
 		})
 	}
 

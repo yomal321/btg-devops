@@ -37,13 +37,35 @@ func ExtractFunctions(ctx context.Context, subID string, cred azcore.TokenCreden
 		}
 	}
 
-	clean, err := CleanResources(apps)
-	if err != nil {
-		return nil, fmt.Errorf("cleaning function apps: %w", err)
+	// Per-app security enrichment (spec 11 §1) is merged into each cleaned
+	// envelope rather than changing this extractor's output shape.
+	cleanApps := make([]json.RawMessage, 0, len(apps))
+	for _, app := range apps {
+		clean, err := CleanResource(app)
+		if err != nil {
+			return nil, fmt.Errorf("cleaning function app %s: %w", derefStr(app.Name), err)
+		}
+		enrichment := SiteEnrichment{}
+		if app.ID != nil && app.Name != nil {
+			enrichment = EnrichSite(ctx, client, extractResourceGroup(*app.ID), *app.Name)
+		}
+		enriched, err := mergeIntoJSON(clean, map[string]any{
+			"security_config":          enrichment.SecurityConfig,
+			"security_config_error":    omitEmpty(enrichment.SecurityConfigError),
+			"auth_config":              enrichment.AuthConfig,
+			"auth_config_error":        omitEmpty(enrichment.AuthConfigError),
+			"app_setting_names":        enrichment.AppSettingNames,
+			"app_settings_error":       omitEmpty(enrichment.AppSettingsError),
+			"keyvault_reference_count": enrichment.KeyVaultReferenceCount,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("enriching function app %s: %w", derefStr(app.Name), err)
+		}
+		cleanApps = append(cleanApps, enriched)
 	}
 
 	return &FunctionsData{
 		TotalFunctionApps: len(apps),
-		FunctionApps:      clean,
+		FunctionApps:      cleanApps,
 	}, nil
 }

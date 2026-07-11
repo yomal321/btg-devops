@@ -172,6 +172,21 @@ internet-reachable — treat like `JWT_SECRET`), or (b) the Go CLI grows a small
 the MCP server calls. **Do not build Step B speculatively** — build it for the specific queries
 `data_gaps` proves are needed.
 
+**Round-1 results (2026-07-12, spec 11).** The first `data_gaps` review happened: 11 of 78
+scope-analyses (audits `b9c6e53d`/`3e22f30c`, 2026-07-11) reported gaps. The extractor-fixable
+ones (site security/auth config, storage containers + lifecycle, broken site metrics, unreliable
+`numberOfSites`, diagnostic settings, missing resource-type coverage, 30-day cost window) were
+implemented in spec 11. The following came back as **not CLI-collectible** and form the standing
+Step B / permissions backlog — each needs a decision beyond extractor code, so track how often
+future runs re-report them before building anything:
+
+| Backlog item | Reported | What it needs |
+|---|---|---|
+| Principal-ID → display-name resolution (IAM assignments, KV access-policy objectIds) | 2 scopes | Microsoft Graph API + directory-read permission for the audit SP |
+| Sign-in / activity logs ("is this broad assignment actually used?") | 1 scope | Entra/activity-log read access; large data volume |
+| Key Vault secret metadata (expiry dates, rotation state) | 2 scopes | Data-plane vault access for the audit SP on every vault — a security decision |
+| ACR image vulnerability scan results | 1 scope | Defender for Cloud enabled on the subscription — a cost decision |
+
 ## 7. Build order
 
 1. **Phase 1** (severity rubric + evidence) — prompt-only, improves the very next run

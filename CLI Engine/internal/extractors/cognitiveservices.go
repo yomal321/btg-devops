@@ -32,13 +32,27 @@ func ExtractCognitiveServices(ctx context.Context, subID string, cred azcore.Tok
 		accounts = append(accounts, page.Value...)
 	}
 
-	clean, err := CleanResources(accounts)
-	if err != nil {
-		return nil, fmt.Errorf("cleaning cognitive services accounts: %w", err)
+	// Each account is enriched with its diagnostic settings (spec 11 §5) —
+	// merged into the cleaned envelope, output shape unchanged.
+	cleanAccounts := make([]json.RawMessage, 0, len(accounts))
+	for _, account := range accounts {
+		clean, err := CleanResource(account)
+		if err != nil {
+			return nil, fmt.Errorf("cleaning cognitive services account %s: %w", derefStr(account.Name), err)
+		}
+		extra := map[string]any{}
+		if account.ID != nil {
+			addDiagnosticSettings(ctx, cred, *account.ID, extra)
+		}
+		enriched, err := mergeIntoJSON(clean, extra)
+		if err != nil {
+			return nil, fmt.Errorf("enriching cognitive services account %s: %w", derefStr(account.Name), err)
+		}
+		cleanAccounts = append(cleanAccounts, enriched)
 	}
 
 	return &CognitiveServicesData{
 		TotalAccounts: len(accounts),
-		Accounts:      clean,
+		Accounts:      cleanAccounts,
 	}, nil
 }

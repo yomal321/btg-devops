@@ -35,6 +35,7 @@ const COLLECTION_STEPS: { key: string; label: string }[] = [
   { key: 'publicip', label: 'Public IP Addresses' },
   { key: 'cognitiveservices', label: 'Cognitive Services' },
   { key: 'resourcegroup', label: 'Resource Groups' },
+  { key: 'inventory', label: 'Full Resource Inventory' },
   { key: 'cost', label: 'Cost Management' },
   { key: 'usage', label: 'Azure Monitor Usage' },
 ]

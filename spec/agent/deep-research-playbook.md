@@ -158,3 +158,39 @@ Before calling `save_analysis`:
   environment map.
 - Do not fabricate a cost figure in Stage 2 — if usage data isn't available for a resource, note
   the gap (Stage 5.3) instead of guessing a number.
+
+## Addendum — new data available since 2026-07-12 (spec 11, round 1 of the data_gaps loop)
+
+Your earlier runs' `data_gaps` reports were turned into collector enrichments. Audits collected
+after 2026-07-12 include the following — use them; do not re-report these as gaps:
+
+- **appservice / functions** — per site: `security_config` (minTlsVersion, ftpsState,
+  http20Enabled, cors, publicNetworkAccess, ip_security_restrictions, scm_ip_security_restrictions),
+  `auth_config` (Easy Auth enabled, unauthenticated_client_action, enabled_providers),
+  `app_setting_names` (names ONLY — values are never collected) and `keyvault_reference_count`.
+  A `DB_PASSWORD`-style setting name with keyvault_reference_count near 0 is plaintext-credential
+  evidence for Stage 3 chains. The site envelope's `identity` block (managed identity principalId)
+  is in the list payload — correlate it against IAM assignments and Key Vault access policies.
+- **appservice metrics** — the site-level HTTP metrics bug is fixed (interval was missing; errors
+  were silently reported as zeros). Zeros accompanied by no `metrics_error` field are now REAL
+  zeros and safe to use for idle-app findings; if `metrics_error` is present, treat as unknown.
+- **storage** — per account: `containers` (name + public_access + last_modified, capped at 50 with
+  `containers_truncated`), exact `total_containers` / `containers_public` counts, and
+  `lifecycle_policy` (explicit `null` = CONFIRMED no policy, vs. field absent = not collected).
+- **appserviceplan** — `sites_hosted` (real derived count; ARM's `numberOfSites` is unreliable and
+  kept only for comparison) and `hosted_site_names` (capped at 20).
+- **keyvault / cognitiveservices** — `diagnostic_settings` per resource (enabled log categories +
+  destinations); empty array = confirmed nothing configured.
+- **new scope `inventory`** — envelope-only list of EVERY resource in the subscription (type
+  counts + name/type/location/resourceGroup/tags). Use it in Stage 1 for the environment map and
+  before concluding a resource group is empty — it covers the types that have no dedicated scope
+  (Front Door, DNS zones, VNets, Log Analytics, NAT gateways, ...).
+- **cost** — now 90 days of daily history (was 30), enough to distinguish a longstanding spend
+  pattern from a recent change in Stage 4 trend judgment.
+
+Every per-resource enrichment is best-effort: a failed sub-fetch records an `*_error` string field
+on that entry. An `*_error` field means "not collected" — still a legitimate `data_gaps` entry —
+whereas an empty list/explicit null means "confirmed absent". Known remaining gaps that are NOT
+collectible by the CLI (do keep reporting them so their demand is measurable): principal-ID →
+directory-name resolution, sign-in/activity logs, Key Vault secret metadata (data-plane), ACR
+vulnerability scan results (needs Defender for Cloud).

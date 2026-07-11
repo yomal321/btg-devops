@@ -32,13 +32,27 @@ func ExtractKeyVault(ctx context.Context, subID string, cred azcore.TokenCredent
 		vaults = append(vaults, page.Value...)
 	}
 
-	clean, err := CleanResources(vaults)
-	if err != nil {
-		return nil, fmt.Errorf("cleaning key vaults: %w", err)
+	// Each vault is enriched with its diagnostic settings (spec 11 §5) —
+	// merged into the cleaned envelope, output shape unchanged.
+	cleanVaults := make([]json.RawMessage, 0, len(vaults))
+	for _, vault := range vaults {
+		clean, err := CleanResource(vault)
+		if err != nil {
+			return nil, fmt.Errorf("cleaning key vault %s: %w", derefStr(vault.Name), err)
+		}
+		extra := map[string]any{}
+		if vault.ID != nil {
+			addDiagnosticSettings(ctx, cred, *vault.ID, extra)
+		}
+		enriched, err := mergeIntoJSON(clean, extra)
+		if err != nil {
+			return nil, fmt.Errorf("enriching key vault %s: %w", derefStr(vault.Name), err)
+		}
+		cleanVaults = append(cleanVaults, enriched)
 	}
 
 	return &KeyVaultData{
 		TotalVaults: len(vaults),
-		Vaults:      clean,
+		Vaults:      cleanVaults,
 	}, nil
 }
