@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, Download, Share2, FileText, FileSpreadsheet, ChevronDown, ChevronRight, Zap } from 'lucide-react'
+import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, RefreshCw, Download, Share2, FileText, FileSpreadsheet, ChevronDown, ChevronRight, Zap } from 'lucide-react'
 import { Badge } from './Badge'
 import { Modal } from './Modal'
 import { api } from '../lib/api'
@@ -404,6 +404,17 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         )}
         {currentAnalysis && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', position: 'relative' }}>
+            {canAnalyze && (
+              <button
+                className="btn-ghost"
+                disabled={running}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.4rem 0.75rem', fontSize: '0.78rem' }}
+                onClick={handleAnalyzeClick}
+                title="Run a fresh analysis for this scope, replacing the cached result"
+              >
+                <RefreshCw size={13} /> Re-run
+              </button>
+            )}
             <div style={{ position: 'relative' }}>
               <button
                 className="btn-ghost"
