@@ -109,11 +109,16 @@ analysis can do:
 
 ### Stage 3 — Chain issues into attack paths (where the real security risk is)
 Single findings are commodity; the value is the **chain**:
-> Public IP → VM → NSG allows 0.0.0.0/0:22 → VM's managed identity has Key Vault access →
+> App Service with public access + no auth → its managed identity has a Key Vault access policy →
 > Key Vault holds prod Cosmos DB keys.
 
-Five Info/Warning-level facts combining into one *actual Critical*: an internet-to-production-data
-path. Findable only by reasoning across resource types together.
+(Originally scoped as a Public-IP → VM → NSG → identity → Key Vault chain — confirmed via `az vm
+list` on the live subscription that there are zero VMs in this environment, so chains here always
+run through PaaS resources — App Service/Functions/Cosmos DB/Storage — and their managed
+identities instead. See §5.5 below.)
+
+Several Info/Warning-level facts combining into one *actual Critical*: an internet-to-production-
+data path. Findable only by reasoning across resource types together.
 
 ### Stage 4 — Judge in context (is this issue real *here*?)
 Weigh every candidate against the Stage 1 map:
@@ -132,8 +137,9 @@ Weigh every candidate against the Stage 1 map:
 
 ```
 ⚠ Investigated finding #1 — Internet-reachable path to production data
-Public IP pip-vm-jump01 → VM vm-jump01 (SSH open to any IP) → managed identity
-with "Key Vault Secrets User" on kv-prod-001 → contains connection strings for
+App Service "app-billing-api" has publicNetworkAccess: Enabled with no auth
+configured → its system-assigned identity holds an access policy on Key Vault
+kv-prod-001 (get/list secrets) → kv-prod-001 contains connection strings for
 bisteccareltdprodacc002.
 Evidence: [4 data points cited] · Fix: 3 steps · Effort: quick
 ```
@@ -142,11 +148,11 @@ Evidence: [4 data points cited] · Fix: 3 steps · Effort: quick
 
 | # | Component | Detail | Blocks on |
 |---|---|---|---|
-| 5.1 | **Playbook file** | `spec/agent/deep-research-playbook.md` — the 5-stage instructions the scheduled agent's prompt points at. Versioned in the repo. The heart of the whole spec. | Nothing |
-| 5.2 | **`deep` request type** | New scope value in `analysis_requests` + trigger (schedule after the audit, and/or a "Deep Research" button gated behind the same confirm-dialog pattern as Analyze All). | Nothing |
-| 5.3 | **Audit-history MCP tool** | New tool (or `get_audit_data` extension) returning previous audits' data/findings for the same subscription, so Stage 4 can see trends. Today the agent sees only the current audit. | Nothing |
-| 5.4 | **Chain-finding schema + UI** | A finding today points at one resource; a chain touches five. Add: list of chained resources + a "why this matters" narrative; distinct headline-card style at the top of the analysis page. Also `fix_effort` (Phase 3) and `data_gaps` on the saved analysis. | 5.1 (shape follows playbook) |
-| 5.5 | **Extractor enrichment (Step A)** | Add the predictable fields deep research needs to the Go extractors — NSG rule details, Key Vault access policies, managed identity role assignments, VM↔public-IP attachments, etc. Exact list produced alongside the playbook. | 5.1 |
+| 5.1 | **Playbook file** — DONE | `spec/agent/deep-research-playbook.md` — the 5-stage instructions the scheduled agent's prompt points at. Versioned in the repo. The heart of the whole spec. | Nothing |
+| 5.2 | **`deep` request type** — DONE | `deep` scope handled in `getScopedAuditData` (`claude.ts`, merges full raw_data+cost+usage like "all" but with the playbook instruction); "Deep Research" option + confirm-dialog + running/queued copy added to `AnalysisPanel.tsx`. Reuses the existing scope-store/poll/export/Quick-Wins machinery for free — no new UI plumbing needed beyond the option itself. | Nothing |
+| 5.3 | **Audit-history MCP tool** — DONE | `get_audit_history(auditId, scope?, limit?)` in `mcp/tools.ts`, backed by `findSubscriptionFindingHistory` in `models/findings.ts` — returns every finding (any status) across past audits of the same subscription, oldest first; `scope` optional so a `deep` request can see history across every resource type. Stage 4 of the playbook calls this instead of guessing at trends. | Nothing |
+| 5.4 | **Chain-finding schema + UI** — DONE | `finding_type` column (`'chain'` \| `'standard'`, `schema.go`) + `data_gaps` on the saved analysis (top-level, not per-finding). A chain reuses existing `affected_resources` (chain's resources in order) and `issue` (hop-by-hop narrative) — `finding_type` only controls rendering. Threaded through `AnalysisFinding`/`ClaudeAnalysis` (`claude.ts`), the MCP `findingSchema`/`save_analysis` input (`tools.ts`), `Finding`/`DisplayFinding` (both `types/index.ts`, `findingsLayout.ts`), and `insertFinding` (`models/findings.ts`). UI: `AnalysisPanel.tsx` renders `finding_type==='chain'` findings as a distinct red-bordered "Investigated finding" headline card above the severity tiles, and any `data_gaps` as a "Data gaps" callout below them (a chain finding still also appears in the regular findings list below, same precedent as Quick wins — filtering the page never hides it entirely). | 5.1 (shape follows playbook) |
+| 5.5 | **Extractor enrichment (Step A)** — DONE, no code needed | Audited every extractor (`CLI Engine/internal/extractors/cleaner.go`'s `CleanResource`/`CleanResources`): they only strip 3 top-level noise fields (`etag`, `systemData`, `type`) plus `id`, and do NOT trim nested properties. So NSG security rules, Key Vault access policies, Public IP `ipConfiguration`, and managed-identity blocks (`identity.principalId` on App Service/Functions/ACR/Cosmos DB) are **already fully collected today** — no extractor change was needed for those. The one real gap found: **no VM/NIC extractor exists at all** (confirmed no `armcompute` usage anywhere in the codebase). Confirmed via live `az vm list` against the actual subscription (BISTEC Care Azure Sponsorship 002) that it has **zero VMs** — so this gap is moot for this environment; decision made to skip building a VM/NIC extractor. The playbook (5.1) was updated to build chains through PaaS resources (App Service/Functions/Cosmos DB/Storage + their managed identities → Key Vault) instead of a VM hop. Revisit only if a future audited subscription is confirmed to actually run VMs. | 5.1 |
 | 5.6 | **The scheduled agent itself** | Spec 8's still-open final step — the cron'd Claude Code agent is NOT configured yet. Nothing runs automatically until it exists. Must be done regardless. | 5.1–5.3 |
 
 ## 6. Agent + extractor evolution (future-proofing)

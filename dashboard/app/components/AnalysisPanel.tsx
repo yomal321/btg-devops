@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, Download, Share2, FileText, FileSpreadsheet, ChevronDown, ChevronRight } from 'lucide-react'
+import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, Download, Share2, FileText, FileSpreadsheet, ChevronDown, ChevronRight, Zap } from 'lucide-react'
 import { Badge } from './Badge'
 import { Modal } from './Modal'
 import { api } from '../lib/api'
@@ -10,7 +10,7 @@ import { buildScopeGroups, scopeLabel, firstScope, UsageTypeInfo } from '../lib/
 import { severityConfig, findingStatusConfig, findingAge } from '../lib/utils'
 import { exportFindingsAsExcel, exportFindingsAsPDF } from '../lib/exportFindings'
 import { isAccountBasedType, type DisplayFinding } from '../lib/findingsLayout'
-import { FindingsGroupFlat } from './FindingsGroupFlat'
+import { FindingsGroupFlat, IssueCard } from './FindingsGroupFlat'
 import { FindingsGroupAccount } from './FindingsGroupAccount'
 import type { Finding, User } from '../types'
 
@@ -23,6 +23,9 @@ export interface Analysis {
   findings: AnalysisFinding[]
   generated_at: string
   model: string
+  // Deep-research only (spec 10 §5.4/§6) — data the agent needed but
+  // couldn't get, recorded so it becomes the next round of extractor work.
+  data_gaps?: string[]
 }
 
 export interface AnalysisStore {
@@ -31,6 +34,11 @@ export interface AnalysisStore {
 }
 
 const ALL_SCOPE = 'all'
+// Whole-subscription, multi-stage investigation (spec 10 §4/§5.2) — distinct
+// from ALL_SCOPE's single-pass sweep. Kept as its own scope value (not part
+// of buildScopeGroups in lib/scopes.ts) since it's Analyze-only, not shared
+// with the Chat panel that consumes the same scope-group builder.
+const DEEP_SCOPE = 'deep'
 const POLL_INTERVAL_MS = 7000
 
 function sleep(ms: number) {
@@ -141,6 +149,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   const [running, setRunning]   = useState(false)
   const [error, setError]       = useState('')
   const [showAllConfirm, setShowAllConfirm] = useState(false)
+  const [showDeepConfirm, setShowDeepConfirm] = useState(false)
   const [sevFilter, setSevFilter]   = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<string>('all')
 
@@ -214,6 +223,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
 
   function handleAnalyzeClick() {
     if (scope === ALL_SCOPE) setShowAllConfirm(true)
+    else if (scope === DEEP_SCOPE) setShowDeepConfirm(true)
     else analyzeScope(scope)
   }
 
@@ -226,7 +236,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
     }
   }
 
-  const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)
+  const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scope === DEEP_SCOPE ? 'Deep Research' : scopeLabel(scope, scopeGroups)
 
   // Exports exactly what's currently on screen (respecting the active
   // severity/type filters), not the full unfiltered scope — filtering to
@@ -290,6 +300,8 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         cost_impact_usd: r.cost_impact_usd,
         cost_impact_note: r.cost_impact_note,
         recommendation_steps: r.recommendation_steps,
+        fix_effort: r.fix_effort,
+        finding_type: r.finding_type,
         issue: r.issue,
         recommendation: r.recommendation,
         status: r.status,
@@ -312,6 +324,28 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
     (typeFilter === 'all' || f.resource_type === typeFilter)
   )
   const hasActiveFilter = sevFilter !== 'all' || typeFilter !== 'all'
+
+  // Quick wins (spec 10, Phase 3) — Critical/Warning findings that are also
+  // cheap to fix (fix_effort='quick'), surfaced ahead of the full findings
+  // list so severity ("how bad") and effort ("how cheap to fix") triage
+  // together instead of only via the raw severity tiles. Computed from the
+  // full (unfiltered) scope findings, not `filtered` — a user filtering
+  // down to Info shouldn't make this section disappear/reappear on them.
+  const [quickWinsOpen, setQuickWinsOpen] = useState(true)
+  const quickWins = useMemo(
+    () => findings.filter(f => (f.severity === 'Critical' || f.severity === 'Warning') && f.fix_effort === 'quick'),
+    [findings]
+  )
+
+  // Chain/headline findings (spec 10 §4 Stage 3, §5.4) — deep-research
+  // findings reasoned across multiple resources into one real attack path
+  // (finding_type='chain'). Rendered as its own section at the very top of
+  // the results, above severity tiles and Quick wins — it IS the deep-
+  // research strategy's main output. Like Quick wins, a chain finding also
+  // still appears in the regular layout below (same highlight-without-
+  // hiding precedent), so filtering the page down never makes it disappear
+  // entirely.
+  const chainFindings = useMemo(() => findings.filter(f => f.finding_type === 'chain'), [findings])
 
   // Which findings layout to render (analysis-ui spec): a single specific
   // resource-type scope gets the account (Cosmos DB/Storage/App Service
@@ -433,6 +467,9 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             {resourceTypes.length > 0 && (
               <option value={ALL_SCOPE}>— All Resources (all {resourceTypes.length} types) —</option>
             )}
+            {resourceTypes.length > 0 && (
+              <option value={DEEP_SCOPE}>— Deep Research (whole subscription, scheduled agent) —</option>
+            )}
           </select>
         </div>
       )}
@@ -452,12 +489,16 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
           <p style={{ fontSize: '0.85rem', color: 'var(--t2)', marginBottom: '1rem' }}>
             {scope === ALL_SCOPE
               ? 'Queue the full audit (all resource types) for analysis in one request.'
+              : scope === DEEP_SCOPE
+              ? 'Queue a deep, multi-stage investigation of the whole subscription — maps the environment, correlates cost/usage/config, and chains issues into real attack paths instead of a single-pass sweep.'
               : resourceTypes.includes(scope)
               ? `Queue only the "${scope}" resources for a focused analysis.`
               : `Queue the ${scopeLabel(scope, scopeGroups)} for a focused analysis.`}
           </p>
           {error && <p style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '0.75rem' }}>{error}</p>}
-          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze</button>
+          <button className="btn-primary" onClick={handleAnalyzeClick}>
+            {scope === DEEP_SCOPE ? 'Run Deep Research' : 'Analyze'}
+          </button>
         </div>
       )}
 
@@ -470,10 +511,12 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             borderRadius: '50%', animation: 'spin 0.8s linear infinite',
           }} />
           <p style={{ fontSize: '0.82rem', color: 'var(--t2)' }}>
-            {scope === ALL_SCOPE ? 'Full audit queued for analysis…' : `${scopeLabel(scope, scopeGroups)} queued for analysis…`}
+            {scope === ALL_SCOPE ? 'Full audit queued for analysis…' : scope === DEEP_SCOPE ? 'Deep research queued…' : `${scopeLabel(scope, scopeGroups)} queued for analysis…`}
           </p>
           <p style={{ fontSize: '0.72rem', color: 'var(--t4)', marginTop: '0.25rem' }}>
-            A scheduled agent picks this up shortly — usually ready within a few minutes.
+            {scope === DEEP_SCOPE
+              ? 'A scheduled agent works through a multi-stage investigation — this can take longer than a regular analysis.'
+              : 'A scheduled agent picks this up shortly — usually ready within a few minutes.'}
           </p>
         </div>
       )}
@@ -485,6 +528,45 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             <p style={{ fontSize: '0.83rem', color: 'var(--t2)', lineHeight: 1.6, marginBottom: '1rem' }}>
               {currentAnalysis.summary}
             </p>
+          )}
+
+          {/* Investigated (chain) findings — deep research's main output (spec 10 §4 Stage 3) */}
+          {chainFindings.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              {chainFindings.map((f, i) => (
+                <div key={f.id || `chain-${i}`} style={{ border: '1px solid rgba(239,68,68,0.5)', borderRadius: 8, overflow: 'hidden' }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.875rem',
+                    background: 'rgba(239,68,68,0.12)', borderBottom: '1px solid rgba(239,68,68,0.3)',
+                  }}>
+                    <TriangleAlert size={14} color="#ef4444" />
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Investigated finding {chainFindings.length > 1 ? `#${i + 1}` : ''}
+                    </span>
+                  </div>
+                  <div style={{ padding: '0.125rem' }}>
+                    <IssueCard f={f} canAnalyze={canAnalyze} onToggleStatus={setFindingStatus} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Data gaps — deep research only (spec 10 §5.5/§6 feedback loop) */}
+          {currentAnalysis.data_gaps && currentAnalysis.data_gaps.length > 0 && (
+            <div style={{
+              marginBottom: '1.25rem', padding: '0.7rem 0.875rem', borderRadius: 8,
+              border: '1px solid var(--border-strong)', background: 'var(--panel)',
+            }}>
+              <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--t2)', marginBottom: '0.4rem' }}>
+                Data gaps — the agent could not verify:
+              </p>
+              <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                {currentAnalysis.data_gaps.map((gap, i) => (
+                  <li key={i} style={{ fontSize: '0.76rem', color: 'var(--t3)', lineHeight: 1.5 }}>{gap}</li>
+                ))}
+              </ul>
+            </div>
           )}
 
           {/* severity tiles */}
@@ -513,6 +595,38 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
               )
             })}
           </div>
+
+          {/* Quick wins — Critical/Warning findings that are also cheap to fix (spec 10 Phase 3) */}
+          {quickWins.length > 0 && (
+            <div style={{
+              marginBottom: '1rem', borderRadius: 8, overflow: 'hidden',
+              border: '1px solid rgba(34,197,94,0.3)', background: 'rgba(34,197,94,0.05)',
+            }}>
+              <button
+                onClick={() => setQuickWinsOpen(v => !v)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%',
+                  padding: '0.7rem 0.875rem', border: 'none', cursor: 'pointer', textAlign: 'left', background: 'none',
+                }}
+              >
+                {quickWinsOpen ? <ChevronDown size={14} color="#22c55e" /> : <ChevronRight size={14} color="#22c55e" />}
+                <Zap size={14} color="#22c55e" />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--t1)' }}>
+                  Quick wins
+                </span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--t3)' }}>
+                  {quickWins.length} issue{quickWins.length === 1 ? '' : 's'} you can fix right now
+                </span>
+              </button>
+              {quickWinsOpen && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', padding: '0 0.875rem 0.875rem' }}>
+                  {quickWins.map((f, i) => (
+                    <IssueCard key={f.id || `qw-${i}`} f={f} canAnalyze={canAnalyze} onToggleStatus={setFindingStatus} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* filter bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.875rem', flexWrap: 'wrap' }}>
@@ -614,6 +728,36 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
                 onClick={() => { setShowAllConfirm(false); analyzeScope(ALL_SCOPE) }}
               >
                 Yes, Analyze All
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* "Deep Research" confirmation dialog */}
+      {showDeepConfirm && (
+        <Modal title="Run Deep Research?" onClose={() => setShowDeepConfirm(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{
+              display: 'flex', gap: '0.625rem', padding: '0.75rem 0.875rem',
+              background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 8,
+            }}>
+              <TriangleAlert size={17} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
+              <p style={{ fontSize: '0.82rem', color: 'var(--t2)', lineHeight: 1.55 }}>
+                This queues a multi-stage investigation across the whole subscription — mapping
+                environments, correlating cost/usage/config, and chaining issues into real attack
+                paths — instead of a single-pass sweep. It takes meaningfully longer than a regular
+                Analyze and is meant to be run occasionally (e.g. daily/weekly), not on every click.
+              </p>
+            </div>
+            {error && <p style={{ color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>}
+            <div style={{ display: 'flex', gap: '0.625rem', justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={() => setShowDeepConfirm(false)}>Cancel</button>
+              <button
+                className="btn-primary"
+                onClick={() => { setShowDeepConfirm(false); analyzeScope(DEEP_SCOPE) }}
+              >
+                Yes, Run Deep Research
               </button>
             </div>
           </div>

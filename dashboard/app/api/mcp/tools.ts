@@ -7,6 +7,7 @@ import {
   markAnalysisRequestFailed,
   hasNoPendingForAudit,
 } from '../models/analysisRequests'
+import { findSubscriptionFindingHistory } from '../models/findings'
 import { getScopedAuditData, saveAnalysisResult, type ClaudeAnalysis } from '../utils/claude'
 import { buildAuditSummaryEmail } from '../utils/auditSummaryEmail'
 import { sendMail, resolveNotificationRecipients } from '../utils/mailer'
@@ -17,7 +18,10 @@ import { sendMail, resolveNotificationRecipients } from '../utils/mailer'
 // just its window into the dashboard's Postgres data.
 
 const findingSchema = z.object({
-  severity: z.enum(['Critical', 'Warning', 'Info']),
+  // Must follow the severity rubric returned in get_audit_data's `instruction`
+  // text — do not default to Critical for anything security-related; pick
+  // the lower severity when unsure.
+  severity: z.enum(['Critical', 'Warning', 'Info']).describe('Follow the severity rubric from get_audit_data\'s instruction exactly — Critical is reserved for actively exploitable/internet-exposed/bleeding-money-today issues, never assigned by category alone.'),
   category: z.string(),
   resource_type: z.string(),
   resource_name: z.string(),
@@ -34,12 +38,23 @@ const findingSchema = z.object({
   affected_resources: z.array(z.string()).optional(),
   cost_impact_usd: z.number().optional(),
   cost_impact_note: z.string().optional(),
-  issue: z.string(),
+  issue: z.string().describe('Must cite the exact field/value from the audit data that proves this issue (e.g. "publicNetworkAccess is Enabled and ipRules is empty"). Do not report a finding you cannot point to specific evidence for.'),
   // Legacy flat fix text — optional here because it's derived from
   // recommendation_steps below if the agent only supplies the array (the
   // preferred, structured field this UI actually renders).
   recommendation: z.string().optional(),
   recommendation_steps: z.array(z.string()).max(4).optional(),
+  // Cost to FIX (separate from severity, which is cost of the PROBLEM) —
+  // powers the "Quick wins" UI section. quick = one CLI command/portal
+  // toggle; moderate = needs some planning/testing; complex = migration,
+  // downtime, or code change. A Critical finding can still be "quick".
+  fix_effort: z.enum(['quick', 'moderate', 'complex']).optional(),
+  // 'chain' marks a deep-research headline finding (playbook Stage 3) — set
+  // this when the finding is several individually low-severity facts
+  // reasoned together into one real attack path. Use affected_resources for
+  // every resource in the chain in order, and issue for the full hop-by-hop
+  // narrative. Omit (or 'standard') for every ordinary finding.
+  finding_type: z.enum(['chain', 'standard']).optional(),
 })
 
 export function registerTools(server: McpServer) {
@@ -76,6 +91,22 @@ export function registerTools(server: McpServer) {
   )
 
   server.registerTool(
+    'get_audit_history',
+    {
+      description: 'Get every finding (any status — open, dismissed, resolved) from past audits of the SAME subscription as auditId, oldest first, including the current audit. Use this in Stage 4 ("judge in context") of a deep-research request to check whether an issue has existed unresolved across multiple audits, or was already flagged and fixed/dismissed before — do not guess at history, call this instead.',
+      inputSchema: {
+        auditId: z.string().describe('The audit UUID to find subscription history for'),
+        scope: z.string().optional().describe('Restrict to one scope (a resource type, "cost", "usage:<type>", or "all"). Omit to see history across every scope — needed for a "deep" request, since "deep" as a scope did not exist before spec 10 and prior audits will have their history under per-resource-type scopes instead.'),
+        limit: z.number().int().min(1).max(1000).default(300).describe('Max rows to return'),
+      },
+    },
+    async ({ auditId, scope, limit }) => {
+      const rows = await findSubscriptionFindingHistory(auditId, scope, limit)
+      return { content: [{ type: 'text', text: JSON.stringify(rows) }] }
+    }
+  )
+
+  server.registerTool(
     'save_analysis',
     {
       description: 'Save a finished analysis for one audit + scope: persists the summary/findings (with full findings lifecycle — dedup, age carry-forward, auto-resolve) and marks the matching pending request done.',
@@ -85,9 +116,10 @@ export function registerTools(server: McpServer) {
         summary: z.string().describe('2-3 sentence overall assessment'),
         findings: z.array(findingSchema),
         model: z.string().default('claude-code-orchestrator').describe('Identifier for the model/agent that produced this analysis'),
+        data_gaps: z.array(z.string()).optional().describe('Deep-research only (playbook Stage 5): data you needed but could not get from get_audit_data/get_audit_history, e.g. "could not verify Key Vault access — access policies not in audit data". Omit for ordinary (non-deep) analyses.'),
       },
     },
-    async ({ auditId, scope, summary, findings, model }) => {
+    async ({ auditId, scope, summary, findings, model, data_gaps }) => {
       const analysis: ClaudeAnalysis = {
         summary,
         // recommendation (legacy flat string, still read by exports/email/
@@ -101,6 +133,7 @@ export function registerTools(server: McpServer) {
         })),
         generated_at: new Date().toISOString(),
         model,
+        data_gaps: data_gaps && data_gaps.length > 0 ? data_gaps : undefined,
       }
       try {
         await saveAnalysisResult(auditId, scope, analysis)
