@@ -153,3 +153,31 @@ MCP tools.
 | 3 | Frontend: Analyze button creates a request + polls for status | Phase 1 |
 | 4 | Scheduled Claude Code cloud agent (via the `schedule` skill) | Phases 1 + 2 |
 | 5 | End-to-end test against a real audit; decide hosting for the MCP server | All above |
+| 6 | Event-driven trigger (superseding the daily-only cron, see below) | Phase 4 |
+
+## Update (2026-07-11) — event-driven trigger, not just a daily cron
+
+Phase 4's routine originally ran on a fixed daily `cron_expression` (`0 8 * * *`) alone. In
+practice this meant an audit's analysis could lag a full day behind its collection: the routine's
+one daily tick often fired *before* that day's audit had even finished (GitHub Actions' own
+scheduling delay pushes the actual collection run to ~10:00–12:00 UTC, well after the routine's
+~08:00 UTC tick), so a day's audit typically got analyzed on the *following* day's tick instead of
+the same day.
+
+**Fix:** the CLI now fires the routine directly, the moment it finishes queuing analysis requests,
+via the routine's `/fire` API endpoint
+([docs](https://platform.claude.com/docs/en/api/claude-code/routines-fire)) — see
+`triggerAnalyzerRoutine()` in `CLI Engine/cmd/collect.go`. This is event-driven, not clock-driven,
+so it works regardless of when an audit runs (scheduled or manual "Run Audit"). The daily cron on
+the routine itself is kept as a fallback in case the immediate trigger fails for any reason (e.g.
+the secret isn't configured, or a transient API error) — `collect` treats a trigger failure as a
+non-fatal warning, never as a reason to fail the audit.
+
+Requirements for this to work:
+- A per-routine API bearer token generated from the routine's page at
+  [claude.ai/code/routines](https://claude.ai/code/routines) (Add another trigger → API → Generate
+  token — shown once, cannot be retrieved again)
+- That token stored as the `ROUTINE_TRIGGER_TOKEN` GitHub Actions secret
+- Headers required on the `/fire` call: `Authorization: Bearer <token>`, `anthropic-version:
+  2023-06-01`, `anthropic-beta: experimental-cc-routine-2026-04-01` — the version header is easy
+  to miss and the endpoint 400s without it
