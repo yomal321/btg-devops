@@ -186,6 +186,7 @@ future runs re-report them before building anything:
 | Sign-in / activity logs ("is this broad assignment actually used?") | 1 scope | Entra/activity-log read access; large data volume |
 | Key Vault secret metadata (expiry dates, rotation state) | 2 scopes | Data-plane vault access for the audit SP on every vault — a security decision |
 | ACR image vulnerability scan results | 1 scope | Defender for Cloud enabled on the subscription — a cost decision |
+| App-setting names (`ListApplicationSettings` → 403 on all 23 apps, first spec-11 audit `22d76f89`) | discovered in verification | `Microsoft.Web/sites/config/list/action` for the audit SP (e.g. Website Contributor or a custom role). Extractor code already handles it — grant the permission and names appear on the next audit |
 
 ## 7. Build order
 
