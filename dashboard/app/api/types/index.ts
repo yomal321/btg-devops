@@ -42,6 +42,12 @@ export interface Finding {
   category: string | null
   resource_type: string
   resource_name: string
+  resource_group: string | null
+  child_resource_name: string | null
+  affected_resources: string[] | null
+  cost_impact_usd: number | null
+  cost_impact_note: string | null
+  recommendation_steps: string[] | null
   issue: string
   recommendation: string
   scope: string | null

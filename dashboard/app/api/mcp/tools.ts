@@ -21,8 +21,25 @@ const findingSchema = z.object({
   category: z.string(),
   resource_type: z.string(),
   resource_name: z.string(),
+  // The resourceGroup field from the resource's own data (cleaner.go attaches
+  // it to every extracted item) — omit for scopes (cost/usage/all) where a
+  // finding doesn't map to one resource group.
+  resource_group: z.string().optional(),
+  // Account-based resource types only (cosmosdb, storage, appserviceplan) —
+  // resource_name is the account/plan, this is the specific database/
+  // container/app. See findingsLayout.ts.
+  child_resource_name: z.string().optional(),
+  // Flat resource types only — every resource affected by the SAME issue,
+  // when one finding covers a pattern across multiple resources.
+  affected_resources: z.array(z.string()).optional(),
+  cost_impact_usd: z.number().optional(),
+  cost_impact_note: z.string().optional(),
   issue: z.string(),
-  recommendation: z.string(),
+  // Legacy flat fix text — optional here because it's derived from
+  // recommendation_steps below if the agent only supplies the array (the
+  // preferred, structured field this UI actually renders).
+  recommendation: z.string().optional(),
+  recommendation_steps: z.array(z.string()).max(4).optional(),
 })
 
 export function registerTools(server: McpServer) {
@@ -73,7 +90,15 @@ export function registerTools(server: McpServer) {
     async ({ auditId, scope, summary, findings, model }) => {
       const analysis: ClaudeAnalysis = {
         summary,
-        findings,
+        // recommendation (legacy flat string, still read by exports/email/
+        // chat context) is derived from recommendation_steps when the agent
+        // only supplied the array — the field this UI actually renders.
+        findings: findings.map(f => ({
+          ...f,
+          recommendation: f.recommendation_steps && f.recommendation_steps.length > 0
+            ? f.recommendation_steps.join('. ')
+            : f.recommendation || '',
+        })),
         generated_at: new Date().toISOString(),
         model,
       }

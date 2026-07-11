@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, Download, Share2, FileText, FileSpreadsheet } from 'lucide-react'
+import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, Download, Share2, FileText, FileSpreadsheet, ChevronDown, ChevronRight } from 'lucide-react'
 import { Badge } from './Badge'
 import { Modal } from './Modal'
 import { api } from '../lib/api'
@@ -9,24 +9,14 @@ import { useAuth } from '../lib/auth'
 import { buildScopeGroups, scopeLabel, firstScope, UsageTypeInfo } from '../lib/scopes'
 import { severityConfig, findingStatusConfig, findingAge } from '../lib/utils'
 import { exportFindingsAsExcel, exportFindingsAsPDF } from '../lib/exportFindings'
+import { isAccountBasedType, type DisplayFinding } from '../lib/findingsLayout'
+import { FindingsGroupFlat } from './FindingsGroupFlat'
+import { FindingsGroupAccount } from './FindingsGroupAccount'
 import type { Finding, User } from '../types'
 
-interface AnalysisFinding {
-  severity: 'Critical' | 'Warning' | 'Info'
-  category: string
-  resource_type: string
-  resource_name: string
-  issue: string
-  recommendation: string
-}
-
-// What the findings cards render. DB-backed rows carry lifecycle fields
-// (id/status/age); findings read from a legacy cached-analysis JSON don't.
-interface DisplayFinding extends AnalysisFinding {
-  id?: string
-  status?: 'open' | 'resolved' | 'dismissed'
-  first_seen_at?: string
-}
+// The LLM output shape (a subset of DisplayFinding, without the DB-only
+// lifecycle fields) — what a freshly-run or cached analysis returns.
+type AnalysisFinding = Omit<DisplayFinding, 'id' | 'status' | 'first_seen_at'>
 
 export interface Analysis {
   summary: string
@@ -67,15 +57,75 @@ const severityTint = {
   Info:     { bg: 'rgba(56,189,248,0.1)', border: 'rgba(56,189,248,0.35)', color: '#38bdf8' },
 }
 
+// Extracted so the same card renders identically whether grouped by
+// resource group or shown as a flat list.
+function FindingCard({ f, canAnalyze, onToggleStatus }: {
+  f: DisplayFinding
+  canAnalyze: boolean
+  onToggleStatus: (id: string, status: 'open' | 'dismissed') => void
+}) {
+  const sc = severityConfig[f.severity] || { label: f.severity, color: 'muted' }
+  const age = f.first_seen_at ? findingAge(f.first_seen_at) : null
+  const st = f.status && f.status !== 'open' ? findingStatusConfig[f.status] : null
+  return (
+    <div style={{
+      border: '1px solid var(--border)', borderRadius: 8, padding: '0.875rem 1rem',
+      background: 'var(--input-bg)',
+      opacity: f.status === 'dismissed' ? 0.55 : 1,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        {severityIcons[f.severity]}
+        <Badge color={sc.color} label={sc.label} />
+        {f.category && <Badge color="muted" label={f.category} />}
+        {age && <Badge color={age.color} label={age.label} />}
+        {st && <Badge color={st.color} label={st.label} />}
+        <span style={{
+          marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--t4)',
+          fontFamily: 'ui-monospace, monospace',
+        }}>
+          {f.resource_type}{f.resource_name ? ` · ${f.resource_name}` : ''}
+        </span>
+        {canAnalyze && f.id && f.status !== 'resolved' && (
+          <button
+            onClick={() => onToggleStatus(f.id!, f.status === 'dismissed' ? 'open' : 'dismissed')}
+            title={f.status === 'dismissed' ? 'Reopen this finding' : "Dismiss (won't fix / accepted risk)"}
+            style={{
+              background: 'none', border: '1px solid var(--border-strong)', borderRadius: 6,
+              color: 'var(--t3)', padding: '0.2rem 0.35rem', cursor: 'pointer', display: 'flex',
+            }}
+          >
+            {f.status === 'dismissed' ? <RotateCcw size={12} /> : <EyeOff size={12} />}
+          </button>
+        )}
+      </div>
+      <p style={{ fontSize: '0.82rem', color: 'var(--t1)', lineHeight: 1.55 }}>{f.issue}</p>
+      {f.recommendation && (
+        <div style={{
+          marginTop: '0.625rem', padding: '0.55rem 0.75rem', borderRadius: 6,
+          background: 'rgba(34,197,94,0.07)', border: '1px solid rgba(34,197,94,0.2)',
+          fontSize: '0.78rem', color: 'var(--t2)', lineHeight: 1.5,
+        }}>
+          <span style={{ color: '#22c55e', fontWeight: 600 }}>Fix: </span>
+          {f.recommendation}
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface AnalysisPanelProps {
   auditId: string
   resourceCounts: Record<string, number>
   initialStore: unknown
   hasCost?: boolean
   usageTypes?: UsageTypeInfo[]
+  // Reports the currently-selected Analyze scope to the parent page, so the
+  // Raw Resource Data section below can show only the type being analyzed
+  // instead of all 12 at once.
+  onScopeChange?: (scope: string) => void
 }
 
-export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost = false, usageTypes = [] }: AnalysisPanelProps) {
+export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost = false, usageTypes = [], onScopeChange }: AnalysisPanelProps) {
   const { user } = useAuth()
   const canAnalyze = user?.role === 'admin' || user?.role === 'analyst'
 
@@ -87,6 +137,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
 
   const [store, setStore] = useState<AnalysisStore>(() => normalizeStore(initialStore))
   const [scope, setScope] = useState<string>(() => firstScope(scopeGroups) || ALL_SCOPE)
+  useEffect(() => { onScopeChange?.(scope) }, [scope, onScopeChange])
   const [running, setRunning]   = useState(false)
   const [error, setError]       = useState('')
   const [showAllConfirm, setShowAllConfirm] = useState(false)
@@ -177,6 +228,9 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
 
   const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)
 
+  // Exports exactly what's currently on screen (respecting the active
+  // severity/type filters), not the full unfiltered scope — filtering to
+  // Critical and hitting Export should not silently include everything.
   function handleExport(format: 'pdf' | 'excel') {
     setShowExportMenu(false)
     if (!currentAnalysis) return
@@ -186,8 +240,8 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
       summary: currentAnalysis.summary || '',
       generatedAt: currentAnalysis.generated_at,
     }
-    if (format === 'excel') exportFindingsAsExcel(findings, meta)
-    else exportFindingsAsPDF(findings, meta)
+    if (format === 'excel') exportFindingsAsExcel(filtered, meta)
+    else exportFindingsAsPDF(filtered, meta)
   }
 
   function openShareModal() {
@@ -230,6 +284,12 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         category: r.category || '',
         resource_type: r.resource_type,
         resource_name: r.resource_name,
+        resource_group: r.resource_group,
+        child_resource_name: r.child_resource_name,
+        affected_resources: r.affected_resources,
+        cost_impact_usd: r.cost_impact_usd,
+        cost_impact_note: r.cost_impact_note,
+        recommendation_steps: r.recommendation_steps,
         issue: r.issue,
         recommendation: r.recommendation,
         status: r.status,
@@ -252,6 +312,46 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
     (typeFilter === 'all' || f.resource_type === typeFilter)
   )
   const hasActiveFilter = sevFilter !== 'all' || typeFilter !== 'all'
+
+  // Which findings layout to render (analysis-ui spec): a single specific
+  // resource-type scope gets the account (Cosmos DB/Storage/App Service
+  // Plan) or flat-by-issue layout; "all"/"cost"/"usage:<type>" scopes span
+  // multiple/no single resource type, so they keep the resource-group
+  // grouping instead — the two groupings are different axes (account/child
+  // vs. Azure resource group) and don't compete for the same scope.
+  const layoutMode: 'account' | 'flat-issue' | 'resource-group' =
+    scope !== ALL_SCOPE && resourceTypes.includes(scope)
+      ? (isAccountBasedType(scope) ? 'account' : 'flat-issue')
+      : 'resource-group'
+
+  // Group by resource group when at least one finding actually has one —
+  // scopes like "cost"/"usage"/"all" or pre-migration findings often won't,
+  // so falling back to a flat list keeps those views unchanged.
+  const UNGROUPED = 'No resource group'
+  const hasResourceGroups = filtered.some(f => f.resource_group)
+  const groupedFindings = useMemo(() => {
+    if (!hasResourceGroups) return null
+    const groups = new Map<string, DisplayFinding[]>()
+    for (const f of filtered) {
+      const key = f.resource_group || UNGROUPED
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(f)
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => {
+      if (a === UNGROUPED) return 1
+      if (b === UNGROUPED) return -1
+      return a.localeCompare(b)
+    })
+  }, [filtered, hasResourceGroups])
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  function toggleGroup(key: string) {
+    setCollapsedGroups(s => {
+      const next = new Set(s)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const selectStyle: React.CSSProperties = {
     background: 'var(--panel)', border: '1px solid var(--border-strong)',
@@ -276,7 +376,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.4rem 0.75rem', fontSize: '0.78rem' }}
                 onClick={() => setShowExportMenu(v => !v)}
               >
-                <Download size={13} /> Export
+                <Download size={13} /> Export{hasActiveFilter ? ` (${filtered.length})` : ''}
               </button>
               {showExportMenu && (
                 <>
@@ -439,62 +539,54 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             </span>
           </div>
 
-          {/* findings cards */}
+          {/* findings — layout depends on scope: account→child, flat-by-issue, or resource-group */}
           {filtered.length === 0 ? (
             <p style={{ textAlign: 'center', color: 'var(--t3)', fontSize: '0.82rem', padding: '1.5rem 0' }}>
               No findings match the selected filters.
             </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {filtered.map((f, i) => {
-                const sc = severityConfig[f.severity] || { label: f.severity, color: 'muted' }
-                const age = f.first_seen_at ? findingAge(f.first_seen_at) : null
-                const st = f.status && f.status !== 'open' ? findingStatusConfig[f.status] : null
+          ) : layoutMode === 'account' ? (
+            <FindingsGroupAccount findings={filtered} canAnalyze={canAnalyze} onToggleStatus={setFindingStatus} />
+          ) : layoutMode === 'flat-issue' ? (
+            <FindingsGroupFlat findings={filtered} canAnalyze={canAnalyze} onToggleStatus={setFindingStatus} />
+          ) : groupedFindings ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+              {groupedFindings.map(([groupName, groupFindings]) => {
+                const collapsed = collapsedGroups.has(groupName)
                 return (
-                  <div key={f.id || i} style={{
-                    border: '1px solid var(--border)', borderRadius: 8, padding: '0.875rem 1rem',
-                    background: 'var(--input-bg)',
-                    opacity: f.status === 'dismissed' ? 0.55 : 1,
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                      {severityIcons[f.severity]}
-                      <Badge color={sc.color} label={sc.label} />
-                      {f.category && <Badge color="muted" label={f.category} />}
-                      {age && <Badge color={age.color} label={age.label} />}
-                      {st && <Badge color={st.color} label={st.label} />}
+                  <div key={groupName} style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                    <button
+                      onClick={() => toggleGroup(groupName)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%',
+                        padding: '0.6rem 0.75rem', background: 'var(--panel)', border: 'none',
+                        cursor: 'pointer', textAlign: 'left',
+                      }}
+                    >
+                      {collapsed ? <ChevronRight size={14} color="var(--t3)" /> : <ChevronDown size={14} color="var(--t3)" />}
                       <span style={{
-                        marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--t4)',
-                        fontFamily: 'ui-monospace, monospace',
+                        fontFamily: 'ui-monospace, monospace', fontSize: '0.8rem', fontWeight: 600,
+                        color: groupName === UNGROUPED ? 'var(--t3)' : 'var(--t1)',
                       }}>
-                        {f.resource_type}{f.resource_name ? ` · ${f.resource_name}` : ''}
+                        {groupName}
                       </span>
-                      {canAnalyze && f.id && f.status !== 'resolved' && (
-                        <button
-                          onClick={() => setFindingStatus(f.id!, f.status === 'dismissed' ? 'open' : 'dismissed')}
-                          title={f.status === 'dismissed' ? 'Reopen this finding' : "Dismiss (won't fix / accepted risk)"}
-                          style={{
-                            background: 'none', border: '1px solid var(--border-strong)', borderRadius: 6,
-                            color: 'var(--t3)', padding: '0.2rem 0.35rem', cursor: 'pointer', display: 'flex',
-                          }}
-                        >
-                          {f.status === 'dismissed' ? <RotateCcw size={12} /> : <EyeOff size={12} />}
-                        </button>
-                      )}
-                    </div>
-                    <p style={{ fontSize: '0.82rem', color: 'var(--t1)', lineHeight: 1.55 }}>{f.issue}</p>
-                    {f.recommendation && (
-                      <div style={{
-                        marginTop: '0.625rem', padding: '0.55rem 0.75rem', borderRadius: 6,
-                        background: 'rgba(34,197,94,0.07)', border: '1px solid rgba(34,197,94,0.2)',
-                        fontSize: '0.78rem', color: 'var(--t2)', lineHeight: 1.5,
-                      }}>
-                        <span style={{ color: '#22c55e', fontWeight: 600 }}>Fix: </span>
-                        {f.recommendation}
+                      <span className="bdg bdg-muted" style={{ marginLeft: 'auto' }}>{groupFindings.length}</span>
+                    </button>
+                    {!collapsed && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', padding: '0.75rem' }}>
+                        {groupFindings.map((f, i) => (
+                          <FindingCard key={f.id || i} f={f} canAnalyze={canAnalyze} onToggleStatus={setFindingStatus} />
+                        ))}
                       </div>
                     )}
                   </div>
                 )
               })}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {filtered.map((f, i) => (
+                <FindingCard key={f.id || i} f={f} canAnalyze={canAnalyze} onToggleStatus={setFindingStatus} />
+              ))}
             </div>
           )}
         </div>

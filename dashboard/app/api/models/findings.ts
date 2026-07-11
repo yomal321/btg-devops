@@ -1,7 +1,8 @@
 import pool from './client'
 import { Finding } from '../types'
 
-const FINDING_COLS = `id, audit_id, severity, category, resource_type, resource_name,
+const FINDING_COLS = `id, audit_id, severity, category, resource_type, resource_name, resource_group,
+            child_resource_name, affected_resources, cost_impact_usd, cost_impact_note, recommendation_steps,
             issue, recommendation, scope, status, first_seen_at, resolved_at, created_at`
 
 export async function findFindingsByAudit(auditId: string, scope?: string): Promise<Finding[]> {
@@ -22,15 +23,24 @@ export async function findFindingsByAudit(auditId: string, scope?: string): Prom
 
 export async function insertFinding(
   auditId: string,
-  finding: { severity: string; category?: string; resource_type: string; resource_name: string; issue: string; recommendation: string },
+  finding: {
+    severity: string; category?: string; resource_type: string; resource_name: string; resource_group?: string
+    child_resource_name?: string; affected_resources?: string[]; cost_impact_usd?: number; cost_impact_note?: string
+    recommendation_steps?: string[]; issue: string; recommendation: string
+  },
   scope?: string,
   lifecycle?: { status?: string; firstSeenAt?: Date }
 ): Promise<number> {
   const { rows } = await pool.query(
-    `INSERT INTO findings (audit_id, severity, category, resource_type, resource_name, issue, recommendation, scope, status, first_seen_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+    `INSERT INTO findings (audit_id, severity, category, resource_type, resource_name, resource_group,
+                            child_resource_name, affected_resources, cost_impact_usd, cost_impact_note, recommendation_steps,
+                            issue, recommendation, scope, status, first_seen_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
     [
       auditId, finding.severity, finding.category || null, finding.resource_type, finding.resource_name,
+      finding.resource_group || null,
+      finding.child_resource_name || null, finding.affected_resources || null,
+      finding.cost_impact_usd ?? null, finding.cost_impact_note || null, finding.recommendation_steps || null,
       finding.issue, finding.recommendation, scope || null,
       lifecycle?.status || 'open', lifecycle?.firstSeenAt || new Date(),
     ]
@@ -106,6 +116,57 @@ export async function findTopFindings(limit: number): Promise<Finding[]> {
     [limit]
   )
   return rows
+}
+
+// Substring search over open findings for the dashboard search bar. LIKE
+// metacharacters in the query are escaped so "100%" matches literally
+// instead of acting as a wildcard.
+export async function searchOpenFindings(q: string, limit: number): Promise<Finding[]> {
+  const pattern = '%' + q.replace(/[%_\\]/g, '\\$&') + '%'
+  const { rows } = await pool.query(
+    `SELECT ${FINDING_COLS}
+     FROM findings
+     WHERE status = 'open' AND (issue ILIKE $1 OR resource_name ILIKE $1 OR resource_type ILIKE $1)
+     ORDER BY CASE severity WHEN 'Critical' THEN 1 WHEN 'Warning' THEN 2 ELSE 3 END, created_at DESC
+     LIMIT $2`,
+    [pattern, limit]
+  )
+  return rows
+}
+
+// True the moment any finding has ever been recorded, regardless of status —
+// distinguishes "nothing has been analyzed yet" from "everything open has
+// since been resolved/dismissed" for the Top Issues empty state, which
+// otherwise reads as if nothing was ever found even when the real story is
+// "all clear."
+export async function hasAnyFindings(): Promise<boolean> {
+  const { rows } = await pool.query(`SELECT EXISTS(SELECT 1 FROM findings) AS has_rows`)
+  return rows[0].has_rows
+}
+
+// Open-finding counts per audit, for the Recent Activity table's per-row
+// severity indicator — one query for however many recent audits are shown
+// rather than one round-trip per row.
+export async function findSeverityCountsByAudits(
+  auditIds: string[]
+): Promise<Record<string, { critical: number; warning: number; info: number }>> {
+  const out: Record<string, { critical: number; warning: number; info: number }> = {}
+  for (const id of auditIds) out[id] = { critical: 0, warning: 0, info: 0 }
+  if (auditIds.length === 0) return out
+
+  const { rows } = await pool.query(
+    `SELECT audit_id, severity, COUNT(*)::int AS count
+     FROM findings
+     WHERE audit_id = ANY($1) AND status = 'open'
+     GROUP BY audit_id, severity`,
+    [auditIds]
+  )
+  for (const row of rows) {
+    const key = row.severity === 'Critical' ? 'critical' : row.severity === 'Warning' ? 'warning' : 'info'
+    if (!out[row.audit_id]) out[row.audit_id] = { critical: 0, warning: 0, info: 0 }
+    out[row.audit_id][key] = row.count
+  }
+  return out
 }
 
 export async function findFindingById(findingId: number): Promise<Finding | null> {

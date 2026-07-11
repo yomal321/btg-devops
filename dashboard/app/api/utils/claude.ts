@@ -12,8 +12,36 @@ export interface AnalysisFinding {
   category: string
   resource_type: string
   resource_name: string
+  // Resource group the affected resource lives in, read straight off the
+  // `resourceGroup` field extractors attach to each item (cleaner.go) —
+  // lets the UI group findings the same way the Raw Resource Data view
+  // groups resources. Optional: "cost"/"usage"/"all"-scope findings don't
+  // always map to one resource group, and old cached analyses predate this
+  // field entirely.
+  resource_group?: string
+  // Account-based resource types only (see findingsLayout.ts) — resource_name
+  // is the account/plan, this is the specific database/container/app.
+  child_resource_name?: string
+  // Flat resource types only — when the SAME issue affects multiple
+  // resources, every affected resource name goes here instead of creating
+  // one finding per resource. Populated by the model directly, never
+  // derived after the fact by matching on issue text (wording varies run to
+  // run — see findingKey below).
+  affected_resources?: string[]
+  // Estimated monthly dollar impact. Exactly one of cost_impact_usd /
+  // cost_impact_note should be set — a label like "security risk" when the
+  // issue has no dollar figure.
+  cost_impact_usd?: number
+  cost_impact_note?: string
   issue: string
+  // Legacy flat fix text — derived from recommendation_steps (joined), kept
+  // so existing consumers (exports, the summary email, chat context) that
+  // read a plain string keep working unchanged.
   recommendation: string
+  // The fix as short, numbered steps (max 4) — what the grouped UI actually
+  // renders. This is the field the model should populate; `recommendation`
+  // above is filled in from this automatically.
+  recommendation_steps?: string[]
 }
 
 export interface ClaudeAnalysis {
@@ -81,9 +109,14 @@ Respond with ONLY a JSON object in this exact shape, no other text:
       "severity": "Critical" | "Warning" | "Info",
       "category": "Security" | "Cost Waste" | "Misconfiguration" | "Governance" | "Performance",
       "resource_type": "one of the resource type keys from the data (e.g. storage, iam, nsg)",
-      "resource_name": "the specific resource affected",
+      "resource_name": "the specific resource affected — for account-based types (cosmosdb, storage, appserviceplan) this is the ACCOUNT/PLAN name, not the individual database/container/app. For a finding shared identically across multiple accounts, set this to any one affected account name (it is not shown) and list every affected account in affected_resources instead — never bolt a count or parenthetical onto this field, e.g. never \"acct1 (and 4 other accounts)\".",
+      "resource_group": "the resourceGroup field from that resource's data, if present — omit this field entirely if the data has no resourceGroup for it",
+      "child_resource_name": "ONLY for account-based resource types (cosmosdb, storage, appserviceplan): the specific database/container/app this finding is about. Omit entirely for every other resource type, for account-level findings that apply to the whole account rather than one child, and for findings shared across multiple accounts.",
+      "affected_resources": ["When the exact same issue affects multiple resources — including multiple ACCOUNTS for account-based resource types (cosmosdb, storage, appserviceplan) — list every affected resource/account name here and write ONE finding for the whole pattern instead of one finding per resource/account. Omit this field entirely for issues unique to a single resource/account."],
+      "cost_impact_usd": "estimated monthly dollar impact as a number, if this issue has one — omit if not applicable",
+      "cost_impact_note": "a short label instead of cost_impact_usd when the issue has no dollar figure, e.g. \\"security risk\\" — always include ONE of cost_impact_usd or cost_impact_note, never omit both",
       "issue": "what the problem is, concretely",
-      "recommendation": "how to fix it, concretely"
+      "recommendation_steps": ["short numbered fix step, imperative, one concrete action per step — max 4 steps, never a paragraph"]
     }
   ]
 }`,
@@ -106,10 +139,20 @@ Respond with ONLY a JSON object in this exact shape, no other text:
     return { error: 'could not parse model analysis response', status: 502 }
   }
 
+  const findings = (Array.isArray(parsed.findings) ? parsed.findings : []).map(f => ({
+    ...f,
+    // The model only produces recommendation_steps; `recommendation` (the
+    // legacy flat string) is derived here so exports/email/chat context
+    // that still read a plain string keep working unchanged.
+    recommendation: Array.isArray(f.recommendation_steps) && f.recommendation_steps.length > 0
+      ? f.recommendation_steps.join('. ')
+      : f.recommendation || '',
+  }))
+
   return {
     analysis: {
       summary: parsed.summary || '',
-      findings: Array.isArray(parsed.findings) ? parsed.findings : [],
+      findings,
       generated_at: new Date().toISOString(),
       model: `${usedProvider}:${usedModel}`,
     },
@@ -161,6 +204,12 @@ async function saveFindings(auditId: string, findings: AnalysisFinding[], scope:
       category: f.category || undefined,
       resource_type: f.resource_type || '',
       resource_name: f.resource_name || '',
+      resource_group: f.resource_group || undefined,
+      child_resource_name: f.child_resource_name || undefined,
+      affected_resources: f.affected_resources && f.affected_resources.length > 0 ? f.affected_resources : undefined,
+      cost_impact_usd: f.cost_impact_usd,
+      cost_impact_note: f.cost_impact_note || undefined,
+      recommendation_steps: f.recommendation_steps && f.recommendation_steps.length > 0 ? f.recommendation_steps : undefined,
       issue: f.issue || '',
       recommendation: f.recommendation || '',
     }, scope, {

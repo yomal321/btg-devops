@@ -9,9 +9,14 @@ import { ChatDock } from '../../components/ChatDock'
 import { RawDataSection } from '../../components/RawDataSection'
 import { DetailSkeleton } from '../../components/Skeleton'
 import { api } from '../../lib/api'
-import { ResourceIcon } from '../../lib/resourceMeta'
+import { resourceMeta } from '../../lib/resourceMeta'
 import { formatNumber, shortId, statusConfig, triggerConfig } from '../../lib/utils'
 import type { AuditDetail } from '../../types'
+
+// How many resource-type chips to show inline before collapsing the rest
+// into "+N more" — keeps the summary a single line instead of the old
+// full-height grid of all 12 types.
+const INLINE_CHIP_COUNT = 3
 
 export default function AuditDetailPage() {
   const params = useParams<{ id: string }>()
@@ -20,6 +25,7 @@ export default function AuditDetailPage() {
   const [audit, setAudit]     = useState<AuditDetail | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [error, setError]     = useState('')
+  const [analyzeScope, setAnalyzeScope] = useState<string>('')
 
   useEffect(() => {
     api.getAudit(id)
@@ -70,6 +76,9 @@ export default function AuditDetailPage() {
   const sc = statusConfig[audit.status]        || { label: audit.status, color: 'muted' }
   const tc = triggerConfig[audit.trigger_type] || { label: audit.trigger_type, color: 'muted' }
   const counts = audit.resource_counts || {}
+  const sortedSlugs = Object.keys(counts).sort((a, b) => counts[b] - counts[a])
+  const inlineSlugs = sortedSlugs.slice(0, INLINE_CHIP_COUNT)
+  const overflowCount = sortedSlugs.length - inlineSlugs.length
   const total  = Object.values(counts).reduce((s, n) => s + n, 0)
   const failed = audit.status === 'failed'
 
@@ -78,61 +87,47 @@ export default function AuditDetailPage() {
       <Header breadcrumbs={breadcrumbs} />
       <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
 
-        {/* Section A — summary */}
-        <div className="glass animate-fade-in" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'flex-start' }}>
-            <div style={{ flex: 1, minWidth: 260 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '1rem', fontWeight: 700, color: 'var(--t1)' }}>
-                  {shortId(audit.id)}
-                </span>
-                <Badge color={sc.color} label={sc.label} />
-                <Badge color={tc.color} label={tc.label} />
-              </div>
-              <p style={{ fontSize: '0.8rem', color: 'var(--t3)' }}>
-                {new Date(audit.created_at).toLocaleString()} · {audit.subscription_name || 'subscription'} · {shortId(audit.subscription_id)}…
-              </p>
+        {/* Section A — a single-line summary strip. Full per-type resource
+            counts live in Raw Resource Data below, one click away, instead
+            of a full-height grid competing with AI Analysis for attention. */}
+        <div className="glass animate-fade-in" style={{ padding: '0.7rem 1rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '0.85rem', fontWeight: 700, color: 'var(--t1)' }}>
+                {shortId(audit.id)}
+              </span>
+              <Badge color={sc.color} label={sc.label} />
+              <Badge color={tc.color} label={tc.label} />
             </div>
+            <p style={{ fontSize: '0.72rem', color: 'var(--t3)' }}>
+              {new Date(audit.created_at).toLocaleString()} · {audit.subscription_name || 'subscription'} · {shortId(audit.subscription_id)}…
+            </p>
 
             {!failed && (
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--t1)', fontFamily: 'ui-monospace, monospace' }}>
-                  {formatNumber(total)}
-                </div>
-                <div style={{ fontSize: '0.7rem', color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  total resources
-                </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginLeft: 'auto' }}>
+                {inlineSlugs.map(slug => (
+                  <span key={slug} className="bdg bdg-muted" style={{ fontFamily: 'ui-monospace, monospace' }}>
+                    {resourceMeta(slug).label} <b style={{ color: 'var(--t1)' }}>{counts[slug]}</b>
+                  </span>
+                ))}
+                {overflowCount > 0 && (
+                  <span className="bdg bdg-muted">+{overflowCount} more</span>
+                )}
+                <span className="bdg bdg-muted" style={{ color: 'var(--t1)' }}>
+                  <b>{formatNumber(total)}</b>&nbsp;total
+                </span>
               </div>
             )}
           </div>
 
-          {failed ? (
+          {failed && (
             <pre style={{
-              marginTop: '1rem', background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
+              marginTop: '0.75rem', background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
               borderRadius: 8, padding: '0.875rem 1rem', fontSize: '0.78rem', color: '#ef4444',
               fontFamily: 'ui-monospace, monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
               {audit.error_message || 'Audit failed with no error message.'}
             </pre>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2" style={{ marginTop: '1rem' }}>
-              {Object.keys(counts).sort().map(slug => (
-                <div key={slug} className="glass-hover" style={{
-                  background: 'var(--input-bg)', border: '1px solid var(--border)',
-                  borderRadius: 8, padding: '0.55rem 0.7rem',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', overflow: 'hidden' }}>
-                    <ResourceIcon slug={slug} size={12} color="var(--t4)" />
-                    <span style={{ fontSize: '0.62rem', color: 'var(--t4)', textTransform: 'uppercase', letterSpacing: '0.05em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {slug}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--t1)', fontFamily: 'ui-monospace, monospace' }}>
-                    {counts[slug]}
-                  </div>
-                </div>
-              ))}
-            </div>
           )}
         </div>
 
@@ -146,8 +141,9 @@ export default function AuditDetailPage() {
               initialStore={audit.claude_analysis}
               hasCost={audit.has_cost}
               usageTypes={audit.usage_types}
+              onScopeChange={setAnalyzeScope}
             />
-            <RawDataSection auditId={audit.id} resourceCounts={counts} />
+            <RawDataSection key={analyzeScope} auditId={audit.id} resourceCounts={counts} selectedType={analyzeScope} />
           </div>
         )}
       </div>

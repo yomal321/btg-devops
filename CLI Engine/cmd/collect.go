@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +19,55 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 )
+
+// defaultAnalyzerRoutineID is the "btg-devops-mcp-analyzer" Claude Code
+// routine that processes analysis_requests via the MCP server (spec 8).
+// Overridable via ANALYZER_ROUTINE_ID in case the routine is ever recreated
+// under a new ID.
+const defaultAnalyzerRoutineID = "trig_016EuQk8v8sTJT8oiYrHbJau"
+
+// triggerAnalyzerRoutine fires the analyzer routine immediately via its
+// /fire API endpoint (https://platform.claude.com/docs/en/api/claude-code/routines-fire)
+// instead of waiting for its own daily cron — otherwise an audit that
+// finishes after the routine's one daily tick has its analysis pushed to
+// the following day. Best-effort: a failure here is a latency regression
+// (the routine's daily schedule still catches it eventually), not a reason
+// to fail an otherwise-successful audit, so every error just logs and
+// returns.
+func triggerAnalyzerRoutine(ctx context.Context) {
+	token := os.Getenv("ROUTINE_TRIGGER_TOKEN")
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "  note: ROUTINE_TRIGGER_TOKEN not set — skipping immediate analyzer trigger (it will still run on its daily schedule)")
+		return
+	}
+	routineID := os.Getenv("ANALYZER_ROUTINE_ID")
+	if routineID == "" {
+		routineID = defaultAnalyzerRoutineID
+	}
+
+	url := fmt.Sprintf("https://api.anthropic.com/v1/claude_code/routines/%s/fire", routineID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: building analyzer trigger request: %v\n", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-beta", "experimental-cc-routine-2026-04-01")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: triggering analyzer routine: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "  warning: analyzer trigger returned %d: %s\n", resp.StatusCode, string(body))
+		return
+	}
+	fmt.Fprintln(os.Stderr, "  triggered analyzer routine to run immediately (same-day analysis instead of waiting for its daily schedule)")
+}
 
 var collectTrigger string
 
@@ -274,6 +325,8 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	}
 	if err := db.QueueAnalysisRequests(ctx, pool, auditID, scopesToQueue); err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	} else if len(scopesToQueue) > 0 {
+		triggerAnalyzerRoutine(ctx)
 	}
 
 	var costJSON, usageJSON json.RawMessage
