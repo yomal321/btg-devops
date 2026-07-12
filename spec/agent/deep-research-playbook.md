@@ -225,6 +225,6 @@ bug:
   item with the most repeat citations; keep citing it.
 - **Blob content inspection** (`storage` scope) — reading actual blob contents to verify what data
   a publicly-readable container holds is a deliberate non-goal, not a missing extractor: the
-  contents may be real patient/consultation data, and reading it is a privacy decision outside an
-  automated audit's mandate. Continue recommending a manual sample check by a human instead of
-  attempting to read content yourself.
+  contents could be sensitive business or customer data, and reading it is a privacy decision
+  outside an automated audit's mandate. Continue recommending a manual sample check by a human
+  instead of attempting to read content yourself.

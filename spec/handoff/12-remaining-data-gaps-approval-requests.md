@@ -87,10 +87,11 @@ verify whether the contents actually include real patient/consultation data."
 
 **Why this should stay unautomated:** confirming that requires reading actual blob **contents**
 via the storage data plane (a separate permission from the ARM `Reader` role, e.g. Storage Blob
-Data Reader). Given the domain (BistecCare — a healthcare-adjacent org name) the data behind that
-public container may be genuinely sensitive (PHI-adjacent). Having an unattended, scheduled AI
-agent read that content automatically — even just to "check" — is a different risk category than
-reading Azure *configuration* metadata, which is all this tool does everywhere else.
+Data Reader). The data behind a publicly-readable container could be genuinely sensitive business
+or customer data — we have no way to know without reading it, which is exactly the point. Having
+an unattended, scheduled AI agent read that content automatically — even just to "check" — is a
+different risk category than reading Azure *configuration* metadata, which is all this tool does
+everywhere else.
 
 **Recommendation:** do not grant data-plane storage access for this purpose. Keep the current
 behavior — the agent flags the *configuration* fact (container is publicly readable) and
