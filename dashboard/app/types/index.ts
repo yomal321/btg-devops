@@ -36,6 +36,18 @@ export interface AuditDetail extends Audit {
   usage_types: { slug: string; count: number }[]
 }
 
+// One currently-unresolved data gap (see app/api/types/index.ts for the
+// backend definition — kept in sync manually, same pattern as Finding).
+export interface DataGapEntry {
+  subscription_id: string
+  subscription_name: string
+  scope: string
+  gaps: string[]
+  audit_id: string
+  generated_at: string
+  consecutive_runs: number
+}
+
 export interface Finding {
   id: string
   audit_id: string

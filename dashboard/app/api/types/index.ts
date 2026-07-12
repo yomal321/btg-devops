@@ -35,6 +35,24 @@ export interface Resource {
   description: string
 }
 
+// One currently-unresolved data gap: the LATEST analysis for one
+// subscription+scope combination still reports at least one entry in its
+// data_gaps array (spec 10 §5.4/§6, spec 13 dashboard visibility). Once a
+// later run stops reporting a gap, it drops out of this list automatically —
+// this is never a historical log, only "what's still open right now".
+export interface DataGapEntry {
+  subscription_id: string
+  subscription_name: string
+  scope: string
+  gaps: string[]
+  audit_id: string
+  generated_at: string
+  // How many of the most recent consecutive runs for this subscription+scope
+  // reported at least one gap — distinguishes "just started" from "been open
+  // for weeks", since a run with zero gaps breaks the streak.
+  consecutive_runs: number
+}
+
 export interface Finding {
   id: string
   audit_id: string

@@ -42,6 +42,9 @@ export const api = {
   listAudits: () =>
     apiFetch<import('../types').Audit[]>('/api/audits'),
 
+  listOpenDataGaps: () =>
+    apiFetch<import('../types').DataGapEntry[]>('/api/data-gaps'),
+
   triggerAudit: () =>
     apiFetch<{ triggered: boolean; triggered_at: string }>('/api/audits/trigger', { method: 'POST' }),
 
