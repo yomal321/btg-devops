@@ -194,3 +194,37 @@ whereas an empty list/explicit null means "confirmed absent". Known remaining ga
 collectible by the CLI (do keep reporting them so their demand is measurable): principal-ID →
 directory-name resolution, sign-in/activity logs, Key Vault secret metadata (data-plane), ACR
 vulnerability scan results (needs Defender for Cloud).
+
+## Addendum 2 — round-2 fixes (2026-07-12, spec 11 round 2)
+
+- **VNet integration was never actually missing.** `virtualNetworkSubnetId` has always been present
+  on each App Service's own `properties` (in the `appservice`/`functions` scope data), not on the
+  `appserviceplan` scope. Check the SITE's data for this field, not the plan's — do not re-report
+  this as a gap.
+- **New scope `cdn`** — every CDN/Azure Front Door profile, each enriched with its `endpoints`
+  (hostname, enabled state) and each endpoint's `routes` (custom domains, forwarding protocol,
+  HTTPS redirect state), plus `security_policies` (WAF policy ID attached + associated domain
+  count). Use this instead of treating CDN/Front Door as opaque inventory entries.
+- **`cosmosdb` scope now includes `ru_pricing_by_region`** — real Azure Retail Prices API rates
+  (provisioned/autoscale per-100-RU-hour, serverless per-million-RU) for every region an account
+  is deployed in. Use this to compute an actual dollar figure for provisioned-vs-autoscale-vs-
+  serverless comparisons instead of only pointing in a direction — a missing region in this map
+  means pricing wasn't available for that SKU/region combination, not a collection failure.
+
+The following three items were reviewed and are **intentionally not addressed by the collector**;
+do not expect them to disappear from future `data_gaps`, and do not treat their persistence as a
+bug:
+
+- **App Settings 403** (`appservice`/`functions`/`keyvault` scopes) — reading actual application
+  setting values requires an elevated Azure role beyond the audit service principal's Reader
+  access, which the project owner has not yet granted (a deliberate access decision — the same
+  call also exposes real secret values, not just names). Keep reporting this gap; its continued
+  presence is the intended signal for when/whether that grant happens.
+- **Principal display-name resolution** (`iam`, `keyvault` scopes) — requires Microsoft Graph API
+  access with directory-read consent, not yet granted. This is the confirmed Step B (§6) backlog
+  item with the most repeat citations; keep citing it.
+- **Blob content inspection** (`storage` scope) — reading actual blob contents to verify what data
+  a publicly-readable container holds is a deliberate non-goal, not a missing extractor: the
+  contents may be real patient/consultation data, and reading it is a privacy decision outside an
+  automated audit's mandate. Continue recommending a manual sample check by a human instead of
+  attempting to read content yourself.
