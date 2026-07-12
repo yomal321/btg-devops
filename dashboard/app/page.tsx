@@ -66,7 +66,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user?.role !== 'admin' && user?.role !== 'analyst') return
     let cancelled = false
-    api.listOpenDataGaps().then(g => { if (!cancelled) setOpenGapCount(g.length) }).catch(() => {})
+    api.listDataGaps().then(v => { if (!cancelled) setOpenGapCount(v.open.length) }).catch(() => {})
     return () => { cancelled = true }
   }, [user?.role])
 

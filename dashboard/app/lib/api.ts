@@ -42,8 +42,14 @@ export const api = {
   listAudits: () =>
     apiFetch<import('../types').Audit[]>('/api/audits'),
 
-  listOpenDataGaps: () =>
-    apiFetch<import('../types').DataGapEntry[]>('/api/data-gaps'),
+  listDataGaps: () =>
+    apiFetch<{ open: import('../types').DataGapEntry[]; resolved: import('../types').ResolvedGapEntry[] }>('/api/data-gaps'),
+
+  markDataGapFixed: (subscription_id: string, scope: string, note?: string) =>
+    apiFetch<{ marked: boolean }>('/api/data-gaps', {
+      method: 'POST',
+      body: JSON.stringify({ subscription_id, scope, note }),
+    }),
 
   triggerAudit: () =>
     apiFetch<{ triggered: boolean; triggered_at: string }>('/api/audits/trigger', { method: 'POST' }),

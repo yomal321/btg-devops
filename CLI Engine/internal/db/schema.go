@@ -253,6 +253,24 @@ INSERT INTO notification_role_settings (role, enabled) VALUES
   ('admin', TRUE), ('analyst', FALSE), ('viewer', FALSE)
 ON CONFLICT (role) DO NOTHING;
 
+-- data_gap_marks lets an admin/analyst manually record "I applied a fix for
+-- this" right after acting on a data_gaps entry (spec: dashboard visibility
+-- for data gaps), instead of only finding out whether it worked once the
+-- next scheduled audit's analysis runs. One row per (subscription, scope) —
+-- re-marking updates it in place rather than creating a history log. The
+-- dashboard computes three states from this: no row = "open"; marked_at at
+-- or after the latest analysis for that scope = "pending verification" (fix
+-- applied, next audit hasn't run yet); marked_at before a LATER analysis
+-- that still reports gaps = "reopened" (the fix didn't actually hold).
+CREATE TABLE IF NOT EXISTS data_gap_marks (
+  subscription_id TEXT NOT NULL,
+  scope           TEXT NOT NULL,
+  marked_by       UUID REFERENCES users(id),
+  marked_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note            TEXT,
+  PRIMARY KEY (subscription_id, scope)
+);
+
 CREATE INDEX IF NOT EXISTS idx_findings_audit_id            ON findings(audit_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_requests_status     ON analysis_requests(status);
 CREATE INDEX IF NOT EXISTS idx_analysis_requests_audit_id   ON analysis_requests(audit_id);

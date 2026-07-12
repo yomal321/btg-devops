@@ -51,6 +51,23 @@ export interface DataGapEntry {
   // reported at least one gap — distinguishes "just started" from "been open
   // for weeks", since a run with zero gaps breaks the streak.
   consecutive_runs: number
+  // 'open': never marked fixed. 'pending_verification': marked fixed, but no
+  // analysis has run since — outcome not yet known. 'reopened': marked
+  // fixed, but a LATER analysis still reports a gap — the fix didn't hold.
+  verification_status: 'open' | 'pending_verification' | 'reopened'
+  mark?: { marked_at: string; marked_by_email: string | null; note: string | null }
+}
+
+// A gap that was marked fixed and has since been confirmed resolved — the
+// scope's latest analysis no longer reports any gaps.
+export interface ResolvedGapEntry {
+  subscription_id: string
+  subscription_name: string
+  scope: string
+  marked_at: string
+  marked_by_email: string | null
+  note: string | null
+  resolved_at: string // the confirming analysis's generated_at
 }
 
 export interface Finding {

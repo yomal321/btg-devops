@@ -46,6 +46,18 @@ export interface DataGapEntry {
   audit_id: string
   generated_at: string
   consecutive_runs: number
+  verification_status: 'open' | 'pending_verification' | 'reopened'
+  mark?: { marked_at: string; marked_by_email: string | null; note: string | null }
+}
+
+export interface ResolvedGapEntry {
+  subscription_id: string
+  subscription_name: string
+  scope: string
+  marked_at: string
+  marked_by_email: string | null
+  note: string | null
+  resolved_at: string
 }
 
 export interface Finding {
