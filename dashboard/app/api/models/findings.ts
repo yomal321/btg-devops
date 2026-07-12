@@ -3,7 +3,7 @@ import { Finding } from '../types'
 
 const FINDING_COLS = `id, audit_id, severity, category, resource_type, resource_name, resource_group,
             child_resource_name, affected_resources, cost_impact_usd, cost_impact_note, recommendation_steps,
-            fix_effort, finding_type, issue, recommendation, scope, status, first_seen_at, resolved_at, created_at`
+            fix_effort, finding_type, issue, evidence, recommendation, scope, status, first_seen_at, resolved_at, created_at`
 
 export async function findFindingsByAudit(auditId: string, scope?: string): Promise<Finding[]> {
   const params: unknown[] = [auditId]
@@ -26,7 +26,7 @@ export async function insertFinding(
   finding: {
     severity: string; category?: string; resource_type: string; resource_name: string; resource_group?: string
     child_resource_name?: string; affected_resources?: string[]; cost_impact_usd?: number; cost_impact_note?: string
-    recommendation_steps?: string[]; fix_effort?: string; finding_type?: string; issue: string; recommendation: string
+    recommendation_steps?: string[]; fix_effort?: string; finding_type?: string; issue: string; evidence?: string; recommendation: string
   },
   scope?: string,
   lifecycle?: { status?: string; firstSeenAt?: Date }
@@ -34,15 +34,15 @@ export async function insertFinding(
   const { rows } = await pool.query(
     `INSERT INTO findings (audit_id, severity, category, resource_type, resource_name, resource_group,
                             child_resource_name, affected_resources, cost_impact_usd, cost_impact_note, recommendation_steps,
-                            fix_effort, finding_type, issue, recommendation, scope, status, first_seen_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+                            fix_effort, finding_type, issue, evidence, recommendation, scope, status, first_seen_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
     [
       auditId, finding.severity, finding.category || null, finding.resource_type, finding.resource_name,
       finding.resource_group || null,
       finding.child_resource_name || null, finding.affected_resources || null,
       finding.cost_impact_usd ?? null, finding.cost_impact_note || null, finding.recommendation_steps || null,
       finding.fix_effort || null, finding.finding_type || null,
-      finding.issue, finding.recommendation, scope || null,
+      finding.issue, finding.evidence || null, finding.recommendation, scope || null,
       lifecycle?.status || 'open', lifecycle?.firstSeenAt || new Date(),
     ]
   )
@@ -233,7 +233,7 @@ export async function findFindingById(findingId: number): Promise<Finding | null
 
 export async function updateFinding(
   findingId: number,
-  fields: { severity?: string; resource_type?: string; resource_name?: string; issue?: string; recommendation?: string; status?: string }
+  fields: { severity?: string; resource_type?: string; resource_name?: string; issue?: string; evidence?: string; recommendation?: string; status?: string }
 ): Promise<boolean> {
   const sets: string[] = []
   const values: unknown[] = [findingId]
@@ -242,6 +242,7 @@ export async function updateFinding(
   if (fields.resource_type !== undefined) { sets.push(`resource_type = $${i++}`); values.push(fields.resource_type) }
   if (fields.resource_name !== undefined) { sets.push(`resource_name = $${i++}`); values.push(fields.resource_name) }
   if (fields.issue !== undefined) { sets.push(`issue = $${i++}`); values.push(fields.issue) }
+  if (fields.evidence !== undefined) { sets.push(`evidence = $${i++}`); values.push(fields.evidence) }
   if (fields.recommendation !== undefined) { sets.push(`recommendation = $${i++}`); values.push(fields.recommendation) }
   if (fields.status !== undefined) {
     sets.push(`status = $${i++}`)

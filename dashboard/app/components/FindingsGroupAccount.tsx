@@ -5,6 +5,7 @@ import { Database, ChevronDown, ChevronRight, EyeOff, RotateCcw } from 'lucide-r
 import { Badge } from './Badge'
 import { CostBadge } from './CostBadge'
 import { FixSteps } from './FixSteps'
+import { EvidenceBlock } from './EvidenceBlock'
 import { IssueCard } from './FindingsGroupFlat'
 import { SEVERITY_DOT_COLOR, SEVERITY_ORDER, worstSeverity, type DisplayFinding } from '../lib/findingsLayout'
 import { findingStatusConfig, findingAge } from '../lib/utils'
@@ -68,6 +69,7 @@ function ChildRow({ childName, findings, canAnalyze, onToggleStatus }: {
             <p style={{ fontSize: '0.78rem', color: 'var(--t2)', lineHeight: 1.5, opacity: f.status === 'dismissed' ? 0.55 : 1 }}>
               {f.issue}
             </p>
+            <EvidenceBlock evidence={f.evidence} />
             <FixSteps steps={f.recommendation_steps} fallback={f.recommendation} />
           </div>
         )
@@ -142,6 +144,7 @@ function AccountCard({ accountName, findings, canAnalyze, onToggleStatus }: {
                 <span style={{ marginLeft: 'auto' }}><CostBadge usd={f.cost_impact_usd} note={f.cost_impact_note || 'impact not estimated'} /></span>
               </div>
               <p style={{ fontSize: '0.78rem', color: 'var(--t2)', lineHeight: 1.5 }}>{f.issue}</p>
+              <EvidenceBlock evidence={f.evidence} />
               <FixSteps steps={f.recommendation_steps} fallback={f.recommendation} />
             </div>
           ))}

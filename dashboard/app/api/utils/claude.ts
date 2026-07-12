@@ -20,7 +20,7 @@ export const SEVERITY_RUBRIC = `Severity rubric — apply strictly, do not defau
 - Info: a deviation from best practice with no current impact.
 Tie-break rule: if you are unsure between two severities, pick the lower one. A finding is not Critical just because it is security-related.
 
-Evidence requirement: every finding's "issue" text must cite the exact field/value from the data that proves it (e.g. "publicNetworkAccess is Enabled and ipRules is empty"). If you cannot point to a specific field/value proving the issue, do not report it — do not guess or report something generic.`
+Evidence requirement: "issue" is the plain-English problem statement; "evidence" must separately cite the exact field/value from the data that proves it (e.g. "publicNetworkAccess = \"Enabled\", ipRules = [] (empty)"). If you cannot point to a specific field/value proving the issue, do not report it — do not guess or report something generic.`
 
 // Every Analyze request — a single resource type, "all", "cost", or
 // "usage:<type>" — follows the same 5-stage deep-research process; there is
@@ -56,6 +56,11 @@ export interface AnalysisFinding {
   cost_impact_usd?: number
   cost_impact_note?: string
   issue: string
+  // Raw field/value proof backing `issue`, shown as its own "why this is
+  // flagged" section in the UI instead of folded into the problem sentence.
+  // Optional because findings saved before this field existed won't have it —
+  // the UI falls back to just not rendering the evidence section for those.
+  evidence?: string
   // Legacy flat fix text — derived from recommendation_steps (joined), kept
   // so existing consumers (exports, the summary email, chat context) that
   // read a plain string keep working unchanged.
@@ -156,7 +161,8 @@ Respond with ONLY a JSON object in this exact shape, no other text:
       "affected_resources": ["When the exact same issue affects multiple resources — including multiple ACCOUNTS for account-based resource types (cosmosdb, storage, appserviceplan) — list every affected resource/account name here and write ONE finding for the whole pattern instead of one finding per resource/account. Omit this field entirely for issues unique to a single resource/account."],
       "cost_impact_usd": "estimated monthly dollar impact as a number, if this issue has one — omit if not applicable",
       "cost_impact_note": "a short label instead of cost_impact_usd when the issue has no dollar figure, e.g. \\"security risk\\" — always include ONE of cost_impact_usd or cost_impact_note, never omit both",
-      "issue": "what the problem is, concretely — MUST cite the exact field/value from the data that proves it (per the evidence requirement above), e.g. \\"publicNetworkAccess is Enabled and ipRules is empty, so the account accepts traffic from any IP\\"",
+      "issue": "the problem, in plain English, for a non-technical reader — no raw field names/values here, e.g. \\"This storage account is publicly exposed to the entire internet with no network restriction.\\"",
+      "evidence": "MUST cite the exact field/value from the data that proves the issue (per the evidence requirement above), e.g. \\"publicNetworkAccess = \\\\\\"Enabled\\\\\\", ipRules = [] (empty)\\"",
       "recommendation_steps": ["short numbered fix step, imperative, one concrete action per step — max 4 steps, never a paragraph"],
       "fix_effort": "quick" | "moderate" | "complex" — quick means a single CLI command or portal toggle with no downtime; moderate needs some planning/testing; complex needs a migration, downtime, or code change. This is about the cost to FIX, not how bad the issue is — a Critical finding can still be "quick"
     }
@@ -255,6 +261,7 @@ async function saveFindings(auditId: string, findings: AnalysisFinding[], scope:
       fix_effort: f.fix_effort || undefined,
       finding_type: f.finding_type || undefined,
       issue: f.issue || '',
+      evidence: f.evidence || undefined,
       recommendation: f.recommendation || '',
     }, scope, {
       status: match?.status === 'dismissed' ? 'dismissed' : 'open',

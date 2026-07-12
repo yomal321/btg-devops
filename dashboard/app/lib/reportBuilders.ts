@@ -15,6 +15,7 @@ export interface ExportableFinding {
   resource_type: string
   resource_name: string
   issue: string
+  evidence?: string | null
   recommendation: string
 }
 
@@ -46,10 +47,10 @@ export async function buildExcelWorkbook(findings: ExportableFinding[], meta: Ex
 
   const sheet = workbook.addWorksheet('Findings', { views: [{ state: 'frozen', ySplit: 4 }] })
   sheet.columns = [
-    { width: 12 }, { width: 20 }, { width: 20 }, { width: 26 }, { width: 45 }, { width: 45 },
+    { width: 12 }, { width: 20 }, { width: 20 }, { width: 26 }, { width: 45 }, { width: 40 }, { width: 45 },
   ]
 
-  sheet.mergeCells('A1:F1')
+  sheet.mergeCells('A1:G1')
   const title = sheet.getCell('A1')
   title.value = `Azure Audit Analysis — ${meta.scopeLabel}`
   title.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } }
@@ -57,23 +58,23 @@ export async function buildExcelWorkbook(findings: ExportableFinding[], meta: Ex
   title.alignment = { vertical: 'middle' }
   sheet.getRow(1).height = 26
 
-  sheet.mergeCells('A2:F2')
+  sheet.mergeCells('A2:G2')
   const metaCell = sheet.getCell('A2')
   metaCell.value = `Audit ${meta.auditId} · Generated ${new Date(meta.generatedAt).toLocaleString()}`
   metaCell.font = { italic: true, size: 9, color: { argb: 'FF64748B' } }
 
   const headerRow = sheet.getRow(4)
-  headerRow.values = ['Severity', 'Category', 'Resource Type', 'Resource Name', 'Issue', 'Recommendation']
+  headerRow.values = ['Severity', 'Category', 'Resource Type', 'Resource Name', 'Issue', 'Evidence', 'Recommendation']
   headerRow.eachCell(cell => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } }
     cell.alignment = { vertical: 'middle', wrapText: true }
   })
   headerRow.height = 20
-  sheet.autoFilter = { from: 'A4', to: 'F4' }
+  sheet.autoFilter = { from: 'A4', to: 'G4' }
 
   findings.forEach(f => {
-    const row = sheet.addRow([f.severity, f.category, f.resource_type, f.resource_name, f.issue, f.recommendation])
+    const row = sheet.addRow([f.severity, f.category, f.resource_type, f.resource_name, f.issue, f.evidence || '', f.recommendation])
     row.eachCell(cell => { cell.alignment = { vertical: 'top', wrapText: true } })
     const fill = SEVERITY_FILL[f.severity]
     if (fill) {
@@ -115,10 +116,10 @@ export function buildPDFDoc(findings: ExportableFinding[], meta: ExportMeta): js
 
   autoTable(doc, {
     startY: y,
-    head: [['Severity', 'Resource Type', 'Resource Name', 'Issue', 'Recommendation']],
-    body: findings.map(f => [f.severity, f.resource_type, f.resource_name, f.issue, f.recommendation]),
+    head: [['Severity', 'Resource Type', 'Resource Name', 'Issue', 'Evidence', 'Recommendation']],
+    body: findings.map(f => [f.severity, f.resource_type, f.resource_name, f.issue, f.evidence || '', f.recommendation]),
     styles: { fontSize: 8, cellWidth: 'wrap', lineColor: [226, 232, 240], lineWidth: 0.3 },
-    columnStyles: { 2: { cellWidth: 32 }, 3: { cellWidth: 44 }, 4: { cellWidth: 44 } },
+    columnStyles: { 2: { cellWidth: 28 }, 3: { cellWidth: 36 }, 4: { cellWidth: 36 }, 5: { cellWidth: 36 } },
     headStyles: { fillColor: BRAND_PURPLE_RGB, textColor: 255, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     didParseCell: data => {

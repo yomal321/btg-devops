@@ -159,6 +159,12 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS fix_effort TEXT;
 -- every non-chain finding after it).
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS finding_type TEXT;
 
+-- evidence — the raw field/value proof backing "issue", split out so the UI
+-- can render "why this is flagged" as its own section instead of folding it
+-- into the plain-English problem sentence. NULL for findings saved before
+-- this column existed; the UI simply omits the evidence section for those.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS evidence TEXT;
+
 -- analysis_requests is the queue behind the MCP-server/Claude-Code-orchestrator
 -- flow (spec 8): the dashboard writes a pending row instead of calling an LLM
 -- API directly, a scheduled Claude Code agent claims it via the MCP server,

@@ -33,6 +33,7 @@ export async function saveFindingsController(auditId: string, findings: Partial<
       resource_type: f.resource_type || '',
       resource_name: f.resource_name || '',
       issue: f.issue || '',
+      evidence: f.evidence || undefined,
       recommendation: f.recommendation || '',
     }, f.scope || undefined)
   }
@@ -47,7 +48,7 @@ export async function getFindingController(findingId: number) {
 
 export async function updateFindingController(
   findingId: number,
-  body: { severity?: string; resource_type?: string; resource_name?: string; issue?: string; recommendation?: string; status?: string }
+  body: { severity?: string; resource_type?: string; resource_name?: string; issue?: string; evidence?: string; recommendation?: string; status?: string }
 ) {
   const validSeverities = ['Critical', 'Warning', 'Info']
   if (body.severity && !validSeverities.includes(body.severity)) {

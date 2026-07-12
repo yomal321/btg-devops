@@ -86,6 +86,7 @@ export interface Finding {
   fix_effort: 'quick' | 'moderate' | 'complex' | null
   finding_type: 'chain' | 'standard' | null
   issue: string
+  evidence: string | null
   recommendation: string
   scope: string | null
   status: 'open' | 'resolved' | 'dismissed'

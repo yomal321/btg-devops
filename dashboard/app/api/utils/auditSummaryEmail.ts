@@ -79,6 +79,7 @@ export async function buildScopeShareData(auditId: string, scope: string): Promi
     resource_type: f.resource_type,
     resource_name: f.resource_name,
     issue: f.issue,
+    evidence: f.evidence || undefined,
     recommendation: f.recommendation,
   }))
 

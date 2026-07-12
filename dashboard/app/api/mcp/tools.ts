@@ -38,7 +38,11 @@ const findingSchema = z.object({
   affected_resources: z.array(z.string()).optional(),
   cost_impact_usd: z.number().optional(),
   cost_impact_note: z.string().optional(),
-  issue: z.string().describe('Must cite the exact field/value from the audit data that proves this issue (e.g. "publicNetworkAccess is Enabled and ipRules is empty"). Do not report a finding you cannot point to specific evidence for.'),
+  issue: z.string().describe('Plain-English statement of the problem, for a non-technical reader. Do NOT put raw field names/values here — that belongs in `evidence`.'),
+  // Split from `issue` (spec: "curated problem + why it's a problem, with
+  // evidence" UI) so the card can show the plain-English problem and the raw
+  // proof as two visually distinct sections instead of one dense sentence.
+  evidence: z.string().describe('The raw field/value proof from the audit data that justifies this finding (e.g. "publicNetworkAccess = \\"Enabled\\", ipRules = [] (empty)"). Must cite exact fields and values — do not report a finding you cannot point to specific evidence for. Required for every finding.'),
   // Legacy flat fix text — optional here because it's derived from
   // recommendation_steps below if the agent only supplies the array (the
   // preferred, structured field this UI actually renders).

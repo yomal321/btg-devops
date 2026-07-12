@@ -12,6 +12,7 @@ import { exportFindingsAsExcel, exportFindingsAsPDF } from '../lib/exportFinding
 import { isAccountBasedType, type DisplayFinding } from '../lib/findingsLayout'
 import { FindingsGroupFlat, IssueCard } from './FindingsGroupFlat'
 import { FindingsGroupAccount } from './FindingsGroupAccount'
+import { EvidenceBlock } from './EvidenceBlock'
 import type { Finding, User } from '../types'
 
 // The LLM output shape (a subset of DisplayFinding, without the DB-only
@@ -107,6 +108,7 @@ function FindingCard({ f, canAnalyze, onToggleStatus }: {
         )}
       </div>
       <p style={{ fontSize: '0.82rem', color: 'var(--t1)', lineHeight: 1.55 }}>{f.issue}</p>
+      <EvidenceBlock evidence={f.evidence} />
       {f.recommendation && (
         <div style={{
           marginTop: '0.625rem', padding: '0.55rem 0.75rem', borderRadius: 6,
@@ -301,6 +303,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         fix_effort: r.fix_effort,
         finding_type: r.finding_type,
         issue: r.issue,
+        evidence: r.evidence,
         recommendation: r.recommendation,
         status: r.status,
         first_seen_at: r.first_seen_at,

@@ -5,6 +5,7 @@ import { AlertCircle, AlertTriangle, Info, EyeOff, RotateCcw } from 'lucide-reac
 import { Badge } from './Badge'
 import { CostBadge } from './CostBadge'
 import { FixSteps } from './FixSteps'
+import { EvidenceBlock } from './EvidenceBlock'
 import { SEVERITY_ORDER, type DisplayFinding } from '../lib/findingsLayout'
 import { severityConfig, findingStatusConfig, findingAge } from '../lib/utils'
 
@@ -88,6 +89,7 @@ export function IssueCard({ f, canAnalyze, onToggleStatus }: {
         <CostBadge usd={f.cost_impact_usd} note={f.cost_impact_note} />
       </div>
       <p style={{ fontSize: '0.82rem', color: 'var(--t1)', lineHeight: 1.55 }}>{f.issue}</p>
+      <EvidenceBlock evidence={f.evidence} />
       <FixSteps steps={f.recommendation_steps} fallback={f.recommendation} />
     </div>
   )

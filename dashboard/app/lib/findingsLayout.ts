@@ -40,6 +40,7 @@ export interface DisplayFinding {
   cost_impact_usd?: number | null
   cost_impact_note?: string | null
   issue: string
+  evidence?: string | null
   recommendation: string
   recommendation_steps?: string[] | null
   fix_effort?: 'quick' | 'moderate' | 'complex' | null

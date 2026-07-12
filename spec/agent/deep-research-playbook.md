@@ -22,9 +22,13 @@
 - Every severity you assign must follow the rubric returned in each `get_audit_data` call's
   `instruction` field (Critical = exploitable/exposed/bleeding money now; Warning = real risk
   needing another factor; Info = best-practice deviation with no current impact; tie-break low).
-  Every `issue` you write must cite the specific field/value that proves it. These rules are not
-  relaxed for deep research — if anything, hold them stricter, since deep findings carry more
-  weight with the reader.
+  `issue` is the plain-English problem statement for a non-technical reader — it must NOT contain
+  raw field names/values. `evidence` is a separate, required field on every finding that must cite
+  the specific field/value that proves the issue (e.g. `publicNetworkAccess = "Enabled", ipRules =
+  [] (empty)`) — the UI renders `issue` and `evidence` as two distinct sections ("the problem" vs.
+  "why this is flagged"), so do not fold one into the other. These rules are not relaxed for deep
+  research — if anything, hold them stricter, since deep findings carry more weight with the
+  reader.
 
 ## Stage 1 — Build the map
 
@@ -57,7 +61,8 @@ single-scope analysis performs:
   dev/test/sandbox.
 
 Every finding produced in this stage should have a `cost_impact_usd` figure derived from the
-correlation, not a guess — show your arithmetic in the `issue` text.
+correlation, not a guess — show your arithmetic in the `evidence` field (keep `issue` as the plain-
+English waste statement, e.g. "This Cosmos DB account is provisioned far above what it uses").
 
 ## Stage 3 — Chain issues into attack paths
 
@@ -98,8 +103,11 @@ Represent a chain finding in `save_analysis` using these fields:
   should omit this field (or set `"standard"`).
 - `resource_name` / `resource_type`: the chain's starting point (the internet-facing resource).
 - `affected_resources`: every resource name in the chain, in order.
-- `issue`: the full narrative, written as the chain itself, citing the actual field/value at each
-  hop (see the App Service → Key Vault → Cosmos DB example above).
+- `issue`: the full narrative in plain English, written as the chain itself, hop by hop (see the
+  App Service → Key Vault → Cosmos DB example above) — no raw field names/values here.
+- `evidence`: the actual field/value backing each hop in the same order (e.g.
+  `publicNetworkAccess: Enabled, authsettingsV2: absent → identity.principalId: Y → Key Vault
+  access policy grants get/list → connection string for Cosmos DB Z`).
 - `cost_impact_note`: `"security risk"` (chains found this way are virtually never cost findings).
 - `fix_effort`: still set normally (quick/moderate/complex) — a chain finding's severity and its
   fix cost are independent, same as any other finding.
