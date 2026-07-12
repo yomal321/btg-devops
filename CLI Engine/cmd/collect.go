@@ -231,6 +231,7 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		{"cognitiveservices", func() (any, error) { return extractors.ExtractCognitiveServices(ctx, subID, cred) }},
 		{"resourcegroup", func() (any, error) { return extractors.ExtractResourceGroup(ctx, subID, cred) }},
 		{"cdn", func() (any, error) { return extractors.ExtractCDN(ctx, subID, cred) }},
+		{"vm", func() (any, error) { return extractors.ExtractVM(ctx, subID, cred) }},
 		// Envelope-only listing of EVERY resource type — covers the ones
 		// without a dedicated extractor (spec 11 §6).
 		{"inventory", func() (any, error) { return extractors.ExtractInventory(ctx, subID, cred) }},

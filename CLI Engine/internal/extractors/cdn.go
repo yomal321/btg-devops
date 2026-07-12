@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cdn/armcdn"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/frontdoor/armfrontdoor"
 )
 
 // CDNData holds clean extracted data for all CDN/Azure Front Door profiles —
@@ -30,7 +31,11 @@ type cdnEndpointEntry struct {
 }
 
 type cdnRoute struct {
-	Name               string   `json:"name"`
+	Name string `json:"name"`
+	// Actual hostnames (e.g. "app.sifma.org.sg"), not the custom domain
+	// resource IDs — spec 11 round 3: without resolving these, the agent
+	// could not match a specific domain name against a route, which
+	// blocked confirming whether a given app/vault sits behind a WAF.
 	CustomDomains      []string `json:"custom_domains"`
 	ForwardingProtocol string   `json:"forwarding_protocol,omitempty"`
 	HTTPSRedirect      string   `json:"https_redirect,omitempty"`
@@ -38,14 +43,19 @@ type cdnRoute struct {
 }
 
 type cdnSecurityPolicyEntry struct {
-	Name              string `json:"name"`
-	WafPolicyID       string `json:"waf_policy_id,omitempty"`
-	AssociatedDomains int    `json:"associated_domains"`
+	Name              string   `json:"name"`
+	WafPolicyID       string   `json:"waf_policy_id,omitempty"`
+	WafPolicyMode     string   `json:"waf_policy_mode,omitempty"`
+	AssociatedDomains []string `json:"associated_domains"`
 }
 
 // ExtractCDN fetches all CDN/Front Door profiles and enriches each with its
 // AFD endpoints (+ routes) and security policies (WAF attachment).
 func ExtractCDN(ctx context.Context, subID string, cred azcore.TokenCredential) (*CDNData, error) {
+	wafPoliciesClient, err := armfrontdoor.NewPoliciesClient(subID, cred, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating WAF policies client: %w", err)
+	}
 	profilesClient, err := armcdn.NewProfilesClient(subID, cred, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating cdn profiles client: %w", err)
@@ -61,6 +71,10 @@ func ExtractCDN(ctx context.Context, subID string, cred azcore.TokenCredential) 
 	securityPoliciesClient, err := armcdn.NewSecurityPoliciesClient(subID, cred, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating security policies client: %w", err)
+	}
+	customDomainsClient, err := armcdn.NewAFDCustomDomainsClient(subID, cred, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating custom domains client: %w", err)
 	}
 
 	var profiles []*armcdn.Profile
@@ -85,14 +99,19 @@ func ExtractCDN(ctx context.Context, subID string, cred azcore.TokenCredential) 
 			rg := extractResourceGroup(*profile.ID)
 			name := *profile.Name
 
-			endpoints, epErr := listCDNEndpoints(ctx, endpointsClient, routesClient, rg, name)
+			domainHostnames, dErr := listCDNDomainHostnames(ctx, customDomainsClient, rg, name)
+			if dErr != nil {
+				extra["custom_domains_error"] = dErr.Error()
+			}
+
+			endpoints, epErr := listCDNEndpoints(ctx, endpointsClient, routesClient, rg, name, domainHostnames)
 			if epErr != nil {
 				extra["endpoints_error"] = epErr.Error()
 			} else {
 				extra["endpoints"] = endpoints
 			}
 
-			policies, spErr := listCDNSecurityPolicies(ctx, securityPoliciesClient, rg, name)
+			policies, spErr := listCDNSecurityPolicies(ctx, securityPoliciesClient, wafPoliciesClient, rg, name, domainHostnames)
 			if spErr != nil {
 				extra["security_policies_error"] = spErr.Error()
 			} else {
@@ -113,7 +132,29 @@ func ExtractCDN(ctx context.Context, subID string, cred azcore.TokenCredential) 
 	}, nil
 }
 
-func listCDNEndpoints(ctx context.Context, endpointsClient *armcdn.AFDEndpointsClient, routesClient *armcdn.RoutesClient, rg, profileName string) ([]cdnEndpointEntry, error) {
+// listCDNDomainHostnames maps every custom domain resource ID in a profile
+// to its actual hostname (e.g. "app.sifma.org.sg") — routes only reference
+// domains by ID, so without this map the agent can't match a real domain
+// name against a route/security policy.
+func listCDNDomainHostnames(ctx context.Context, client *armcdn.AFDCustomDomainsClient, rg, profileName string) (map[string]string, error) {
+	out := map[string]string{}
+	pager := client.NewListByProfilePager(rg, profileName, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return out, fmt.Errorf("listing custom domains: %w", err)
+		}
+		for _, d := range page.Value {
+			if d == nil || d.ID == nil || d.Properties == nil || d.Properties.HostName == nil {
+				continue
+			}
+			out[*d.ID] = *d.Properties.HostName
+		}
+	}
+	return out, nil
+}
+
+func listCDNEndpoints(ctx context.Context, endpointsClient *armcdn.AFDEndpointsClient, routesClient *armcdn.RoutesClient, rg, profileName string, domainHostnames map[string]string) ([]cdnEndpointEntry, error) {
 	var out []cdnEndpointEntry
 	pager := endpointsClient.NewListByProfilePager(rg, profileName, nil)
 	for pager.More() {
@@ -134,7 +175,7 @@ func listCDNEndpoints(ctx context.Context, endpointsClient *armcdn.AFDEndpointsC
 					entry.EnabledState = string(*p.EnabledState)
 				}
 			}
-			routes, err := listCDNRoutes(ctx, routesClient, rg, profileName, *ep.Name)
+			routes, err := listCDNRoutes(ctx, routesClient, rg, profileName, *ep.Name, domainHostnames)
 			if err != nil {
 				entry.RoutesError = err.Error()
 			} else {
@@ -146,7 +187,7 @@ func listCDNEndpoints(ctx context.Context, endpointsClient *armcdn.AFDEndpointsC
 	return out, nil
 }
 
-func listCDNRoutes(ctx context.Context, client *armcdn.RoutesClient, rg, profileName, endpointName string) ([]cdnRoute, error) {
+func listCDNRoutes(ctx context.Context, client *armcdn.RoutesClient, rg, profileName, endpointName string, domainHostnames map[string]string) ([]cdnRoute, error) {
 	var out []cdnRoute
 	pager := client.NewListByEndpointPager(rg, profileName, endpointName, nil)
 	for pager.More() {
@@ -161,8 +202,13 @@ func listCDNRoutes(ctx context.Context, client *armcdn.RoutesClient, rg, profile
 			route := cdnRoute{Name: *r.Name}
 			if p := r.Properties; p != nil {
 				for _, d := range p.CustomDomains {
-					if d != nil && d.ID != nil {
-						route.CustomDomains = append(route.CustomDomains, *d.ID)
+					if d == nil || d.ID == nil {
+						continue
+					}
+					if hostname, ok := domainHostnames[*d.ID]; ok {
+						route.CustomDomains = append(route.CustomDomains, hostname)
+					} else {
+						route.CustomDomains = append(route.CustomDomains, *d.ID) // fallback: unresolved
 					}
 				}
 				if p.ForwardingProtocol != nil {
@@ -184,7 +230,7 @@ func listCDNRoutes(ctx context.Context, client *armcdn.RoutesClient, rg, profile
 	return out, nil
 }
 
-func listCDNSecurityPolicies(ctx context.Context, client *armcdn.SecurityPoliciesClient, rg, profileName string) ([]cdnSecurityPolicyEntry, error) {
+func listCDNSecurityPolicies(ctx context.Context, client *armcdn.SecurityPoliciesClient, wafClient *armfrontdoor.PoliciesClient, rg, profileName string, domainHostnames map[string]string) ([]cdnSecurityPolicyEntry, error) {
 	var out []cdnSecurityPolicyEntry
 	pager := client.NewListByProfilePager(rg, profileName, nil)
 	for pager.More() {
@@ -201,10 +247,23 @@ func listCDNSecurityPolicies(ctx context.Context, client *armcdn.SecurityPolicie
 				if wafParams, ok := p.Parameters.(*armcdn.SecurityPolicyWebApplicationFirewallParameters); ok && wafParams != nil {
 					if wafParams.WafPolicy != nil && wafParams.WafPolicy.ID != nil {
 						entry.WafPolicyID = *wafParams.WafPolicy.ID
+						if mode, err := fetchWAFPolicyMode(ctx, wafClient, *wafParams.WafPolicy.ID); err == nil {
+							entry.WafPolicyMode = mode
+						}
 					}
 					for _, assoc := range wafParams.Associations {
-						if assoc != nil {
-							entry.AssociatedDomains += len(assoc.Domains)
+						if assoc == nil {
+							continue
+						}
+						for _, d := range assoc.Domains {
+							if d == nil || d.ID == nil {
+								continue
+							}
+							if hostname, ok := domainHostnames[*d.ID]; ok {
+								entry.AssociatedDomains = append(entry.AssociatedDomains, hostname)
+							} else {
+								entry.AssociatedDomains = append(entry.AssociatedDomains, *d.ID)
+							}
 						}
 					}
 				}
@@ -213,4 +272,34 @@ func listCDNSecurityPolicies(ctx context.Context, client *armcdn.SecurityPolicie
 		}
 	}
 	return out, nil
+}
+
+// fetchWAFPolicyMode reads a WAF policy's Mode (Prevention/Detection) from
+// its resource ID — spec 11 round 3: the policy attachment was already
+// captured, but not whether it's actually blocking traffic or only logging.
+func fetchWAFPolicyMode(ctx context.Context, client *armfrontdoor.PoliciesClient, policyID string) (string, error) {
+	rg := extractResourceGroup(policyID)
+	name := lastPathSegment(policyID)
+	if rg == "" || name == "" {
+		return "", fmt.Errorf("could not parse resource group/name from WAF policy ID %q", policyID)
+	}
+	policy, err := client.Get(ctx, rg, name, nil)
+	if err != nil {
+		return "", err
+	}
+	if policy.Properties != nil && policy.Properties.PolicySettings != nil && policy.Properties.PolicySettings.Mode != nil {
+		return string(*policy.Properties.PolicySettings.Mode), nil
+	}
+	return "", nil
+}
+
+// lastPathSegment returns the final "/"-separated segment of an ARM
+// resource ID — the resource's own name.
+func lastPathSegment(id string) string {
+	for i := len(id) - 1; i >= 0; i-- {
+		if id[i] == '/' {
+			return id[i+1:]
+		}
+	}
+	return id
 }

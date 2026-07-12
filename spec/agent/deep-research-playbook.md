@@ -228,3 +228,34 @@ bug:
   contents could be sensitive business or customer data, and reading it is a privacy decision
   outside an automated audit's mandate. Continue recommending a manual sample check by a human
   instead of attempting to read content yourself.
+
+## Addendum 3 — round-3 fixes (2026-07-12, spec 11 round 3)
+
+- **`appserviceplan.sites_hosted` was already correct — read it before concluding anything about
+  `numberOfSites`.** A prior run reported "`numberOfSites` is 0 for all plans, contradicting the
+  appservice data" as a gap, even though **that exact contradiction was already resolved** on the
+  very same `appserviceplan` entry: `sites_hosted` (an integer) and `hosted_site_names` (the actual
+  app names) are the derived, correct answer, sitting right next to `properties.numberOfSites` on
+  every plan object. Do not cross-reference the `appservice` scope's `serverFarmId` yourself to
+  work this out, and do not report this as a gap — the derived fields exist specifically so you
+  don't have to.
+- **New scope `vm`** — every Virtual Machine, full config plus `power_state` (running/deallocated/
+  stopped — not on the base resource, fetched separately). This scope did not exist before round 3;
+  a prior `inventory`-scope gap caught a real VM with an active cost line that no extractor tracked.
+  A new checklist applies to this scope (idle-but-costing, oversizing, public exposure, missing
+  managed identity/encryption/patch signal) — treat it like any other resource type from here on.
+- **`cdn` scope's `custom_domains` are now real hostnames**, not resource IDs (e.g.
+  `"app.sifma.org.sg"`, not `/subscriptions/.../customDomains/xyz`) — match these directly against
+  a Key Vault or App Service's own hostname/domain data to confirm a public-endpoint-to-secret
+  chain, instead of noting you couldn't correlate them.
+- **`cdn` scope's `security_policies[].waf_policy_mode`** is now populated (`Prevention` or
+  `Detection`) — a WAF policy in `Detection` mode is logging only, not actually blocking traffic;
+  factor this into severity the same way you would an NSG rule that looks restrictive but isn't
+  actually enforced.
+- **`cognitiveservices` scope now includes per-account `metrics`** (`total_calls`,
+  `successful_calls`, `total_errors`, 30-day) — use this for the pricing-tier-fit and unused-account
+  checklist items instead of reporting call volume as unavailable.
+- **`functions` scope now includes per-app `functions[]`** — each function's `trigger_type` and
+  `auth_level` (`anonymous`/`function`/`admin`). An HTTP-triggered function with `auth_level:
+  "anonymous"` is callable with no key at all; use this instead of treating callability as
+  unconfirmable. (App Settings 403 is unrelated and separate — still open, still expected.)

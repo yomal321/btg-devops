@@ -107,6 +107,19 @@ export const CHECKLISTS: Record<string, string[]> = {
     'Is the IP attached to a resource that also has a wide-open NSG rule (compounding exposure — cross-reference nsg data)?',
     'Is DDoS protection expected (per tags/environment) but not enabled?',
   ],
+  // Added spec 11 round 3 — the deep-research agent's own inventory scope
+  // caught a live VM with a real cost line that no extractor was tracking
+  // until this checklist existed; see spec/handoff/13-round-3-fixes.md.
+  vm: [
+    'Is power_state "deallocated" or "stopped" while the VM still shows a cost line — wasted spend on attached disks/reserved capacity?',
+    'Is the VM oversized for its actual workload (cross-reference usage/cost data if available) — a right-sizing opportunity?',
+    'Does the VM have a public IP directly attached (cross-reference publicip/nsg data) with no NSG restricting inbound access?',
+    'Is managed identity absent when the VM likely needs to authenticate to other Azure resources (per naming/tags), suggesting credentials might be stored locally instead?',
+    'Is disk encryption (at-host or Azure Disk Encryption) missing on a VM tagged/named as production?',
+    'Is the VM using an unmanaged disk or an outdated/deprecated VM size series?',
+    'Is boot diagnostics disabled, removing a basic troubleshooting/audit signal?',
+    'Is the VM missing from any patch-management/update configuration signal present in the data?',
+  ],
 }
 
 /** Returns the checklist text to append to a single resource-type scope's
