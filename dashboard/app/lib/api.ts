@@ -118,6 +118,13 @@ export const api = {
   topFindings: (limit = 8) =>
     apiFetch<{ findings: import('../types').Finding[]; hasAnyFindings: boolean }>(`/api/findings/top?limit=${limit}`),
 
+  savings: (subscriptionId?: string) =>
+    apiFetch<{
+      months: { month: string; total_saved_usd: number; findings_resolved: number }[]
+      total_saved_usd: number
+      total_findings_resolved: number
+    }>(`/api/findings/savings${subscriptionId ? `?subscriptionId=${encodeURIComponent(subscriptionId)}` : ''}`),
+
   searchFindings: (q: string, limit = 8) =>
     apiFetch<{ findings: import('../types').Finding[] }>(`/api/findings/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 

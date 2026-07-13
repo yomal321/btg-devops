@@ -332,6 +332,17 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 			scopesToQueue = append(scopesToQueue, e.key)
 		}
 	}
+	// Cost and usage are extracted separately (see below) and previously
+	// never got queued at all — the scheduled agent only ever saw the 12
+	// resource-type scopes, silently skipping cost/usage analysis every
+	// audit. Queue "cost" whenever any cost rows came back, and one
+	// "usage:<slug>" per resource type that actually has metric data.
+	if costData != nil && costData.TotalRows > 0 {
+		scopesToQueue = append(scopesToQueue, "cost")
+	}
+	for _, slug := range extractors.UsageTypeSlugs(usageData) {
+		scopesToQueue = append(scopesToQueue, "usage:"+slug)
+	}
 	if err := db.QueueAnalysisRequests(ctx, pool, auditID, scopesToQueue); err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 	} else if len(scopesToQueue) > 0 {

@@ -222,6 +222,45 @@ export async function findSubscriptionFindingHistory(
   return rows
 }
 
+export interface MonthlySavingsRow {
+  month: string // YYYY-MM, month resolved_at falls in
+  total_saved_usd: number
+  findings_resolved: number
+}
+
+// Sums cost_impact_usd for findings that flipped to 'resolved' (saveFindings'
+// auto-resolve — a cost-waste finding that no longer appears in a fresh
+// analysis), grouped by month. Pure SQL aggregation over data the findings
+// lifecycle already maintains — no estimation involved, since a finding is
+// either resolved or it isn't and its cost_impact_usd was already set by the
+// analysis that flagged it. subscriptionId narrows to one subscription;
+// omit it for an org-wide total.
+export async function findMonthlySavings(subscriptionId?: string, months = 12): Promise<MonthlySavingsRow[]> {
+  const params: unknown[] = [months]
+  let where = `f.status = 'resolved' AND f.resolved_at IS NOT NULL AND f.cost_impact_usd IS NOT NULL
+               AND f.resolved_at >= date_trunc('month', now()) - ($1 || ' months')::interval`
+  if (subscriptionId) {
+    params.push(subscriptionId)
+    where += ` AND a.subscription_id = $${params.length}`
+  }
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('month', f.resolved_at), 'YYYY-MM') AS month,
+            SUM(f.cost_impact_usd) AS total_saved_usd,
+            COUNT(*) AS findings_resolved
+     FROM findings f
+     JOIN audits a ON a.id = f.audit_id
+     WHERE ${where}
+     GROUP BY month
+     ORDER BY month DESC`,
+    params
+  )
+  return rows.map(r => ({
+    month: r.month,
+    total_saved_usd: Math.round(Number(r.total_saved_usd) * 100) / 100,
+    findings_resolved: Number(r.findings_resolved),
+  }))
+}
+
 export async function findFindingById(findingId: number): Promise<Finding | null> {
   const { rows } = await pool.query(
     `SELECT ${FINDING_COLS}

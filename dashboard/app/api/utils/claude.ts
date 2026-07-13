@@ -1,9 +1,12 @@
-import { findAuditById, updateClaudeAnalysis, findAnalysisById, findAuditCostUsageRaw, findAuditUsageRaw, findAuditCostRaw } from '../models/audit'
+import { findAuditById, updateClaudeAnalysis, findAnalysisById, findAuditCostUsageRaw, findAuditUsageRaw, findAuditCostRaw, findPreviousAuditCostUsageRaw } from '../models/audit'
 import { insertFinding, findFindingsByAudit, deleteFindingsByScope, findPriorLiveFindings, deleteFindingsByIds, resolveFindingsByIds } from '../models/findings'
 import { ChatMessage, Finding } from '../types'
 import { callLLMWithFallback, LLMProvider, LLMMessage } from './llm'
-import { buildUsageGroups } from './usage'
+import { buildUsageGroups, resourceTypeSlug } from './usage'
 import { checklistForType } from './analysisChecklists'
+import { detectZombieSpend, detectSpendSpikes, detectServiceConcentration, detectCostUsageWaste, compareCostPeriods, forecastCost, rollupCostByResourceGroup, rollupCostByTag, detectReservedInstanceCandidates, InventoryDataRaw } from './costInsights'
+import { detectIdleResources, compareUsagePeriods } from './usageInsights'
+import { CostRow, UsageMetricRaw } from '../types'
 
 const DEFAULT_PROVIDER: LLMProvider = 'claude'
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
@@ -284,6 +287,77 @@ export interface ScopedAuditData {
   instruction: string
 }
 
+// A short line appended to any instruction whose data includes
+// precomputed_signals — tells the agent these were computed deterministically
+// (spike baselines, zombie-spend diffs, etc.) so it verifies/explains context
+// instead of re-deriving the underlying arithmetic itself.
+const PRECOMPUTED_SIGNALS_NOTE = 'The data includes a `precomputed_signals` object — these are deterministically computed (not model-generated) facts: cost/usage anomalies, concentration ratios, idle resources, and similar. Treat their numbers as ground truth; your job is to judge severity/context and write the finding, not recompute the math. Exception: `reserved_instance_candidates` is only a STABILITY signal (low variance + high mean daily cost) — before recommending a Reserved Instance/Savings Plan commitment, use other data (e.g. whether the resource looks permanent vs. slated for decommissioning per other findings) to judge whether committing is actually wise.'
+
+// Builds every cost/usage precomputed signal relevant to a scope, omitting
+// empty arrays so a quiet subscription doesn't bloat the payload with empty
+// lists. costRows/usageMetrics/inventory are each optional because not every
+// scope has all three on hand (e.g. "usage:<type>" never loads cost rows).
+function buildPrecomputedSignals(opts: {
+  costRows?: CostRow[]
+  usageMetrics?: UsageMetricRaw[]
+  inventory?: InventoryDataRaw | null
+  // Previous audit's rows/metrics for the SAME subscription (see
+  // findPreviousAuditCostUsageRaw), for audit-over-audit "$X this audit vs
+  // $Y last audit" comparisons. Undefined when there's no prior audit yet.
+  previousCostRows?: CostRow[]
+  previousCostPeriod?: { from: string; to: string }
+  previousUsageMetrics?: UsageMetricRaw[]
+}): Record<string, unknown> | undefined {
+  const signals: Record<string, unknown> = {}
+
+  if (opts.costRows && opts.costRows.length > 0) {
+    const zombieSpend = detectZombieSpend(opts.costRows, opts.inventory)
+    const spendSpikes = detectSpendSpikes(opts.costRows)
+    const serviceConcentration = detectServiceConcentration(opts.costRows)
+    if (zombieSpend.length > 0) signals.zombie_spend = zombieSpend
+    if (spendSpikes.length > 0) signals.spend_spikes = spendSpikes
+    if (serviceConcentration.length > 0) signals.service_concentration = serviceConcentration
+
+    if (opts.previousCostRows && opts.previousCostPeriod) {
+      const comparison = compareCostPeriods(opts.costRows, {
+        rows: opts.previousCostRows,
+        periodFrom: opts.previousCostPeriod.from,
+        periodTo: opts.previousCostPeriod.to,
+      })
+      if (comparison) signals.cost_period_comparison = comparison
+    }
+
+    const forecast = forecastCost(opts.costRows)
+    if (forecast) signals.cost_forecast = forecast
+
+    const byResourceGroup = rollupCostByResourceGroup(opts.costRows, opts.inventory)
+    if (byResourceGroup.length > 0) signals.cost_by_resource_group = byResourceGroup
+
+    const byTag = rollupCostByTag(opts.costRows, opts.inventory)
+    if (byTag.length > 0) signals.cost_by_tag = byTag
+
+    const riCandidates = detectReservedInstanceCandidates(opts.costRows)
+    if (riCandidates.length > 0) signals.reserved_instance_candidates = riCandidates
+  }
+
+  if (opts.usageMetrics && opts.usageMetrics.length > 0) {
+    const idleResources = detectIdleResources(opts.usageMetrics)
+    if (idleResources.length > 0) signals.idle_resources = idleResources
+
+    if (opts.previousUsageMetrics) {
+      const usageComparison = compareUsagePeriods(opts.usageMetrics, opts.previousUsageMetrics)
+      if (usageComparison.length > 0) signals.usage_period_comparison = usageComparison
+    }
+  }
+
+  if (opts.costRows && opts.costRows.length > 0 && opts.usageMetrics && opts.usageMetrics.length > 0) {
+    const costUsageWaste = detectCostUsageWaste(opts.costRows, opts.usageMetrics)
+    if (costUsageWaste.length > 0) signals.cost_usage_waste = costUsageWaste
+  }
+
+  return Object.keys(signals).length > 0 ? signals : undefined
+}
+
 // Resolves what to send an LLM (or the MCP-server-driven Claude Code agent —
 // see spec 8) for a given scope, and the instruction to send alongside it.
 // Pulled out of runAnalysis so the same scoping rules serve both the
@@ -307,12 +381,23 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
     // their own DB columns, so the full-subscription analysis doesn't lose
     // visibility into spend and utilization data.
     const costUsage = await findAuditCostUsageRaw(auditId)
+    const previous = await findPreviousAuditCostUsageRaw(auditId)
+    const precomputedSignals = buildPrecomputedSignals({
+      costRows: costUsage?.cost?.actual_cost_rows,
+      usageMetrics: costUsage?.usage?.metrics,
+      inventory: (audit.raw_data as Record<string, unknown>)?.inventory as InventoryDataRaw | undefined,
+      previousCostRows: previous?.cost?.actual_cost_rows,
+      previousCostPeriod: previous?.cost ? { from: previous.cost.period_from, to: previous.cost.period_to } : undefined,
+      previousUsageMetrics: previous?.usage?.metrics,
+    })
     const fullData = {
       ...audit.raw_data,
       ...(costUsage?.cost ? { cost: costUsage.cost } : {}),
       ...(costUsage?.usage ? { usage: costUsage.usage } : {}),
+      ...(precomputedSignals ? { precomputed_signals: precomputedSignals } : {}),
     }
-    const instruction = `Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).\n\n${DEEP_RESEARCH_DIRECTIVE}\n\n${SEVERITY_RUBRIC}`
+    let instruction = `Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).\n\n${DEEP_RESEARCH_DIRECTIVE}\n\n${SEVERITY_RUBRIC}`
+    if (precomputedSignals) instruction += `\n\n${PRECOMPUTED_SIGNALS_NOTE}`
     return { data: fullData, instruction }
   }
 
@@ -323,18 +408,37 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
   // Resource Utilization dropdown and the scope selectors in the UI.
   let resourceData: unknown
   let instruction: string
+  let precomputedSignals: Record<string, unknown> | undefined
   if (scope === 'cost') {
-    resourceData = (await findAuditCostRaw(auditId))?.cost
+    const cost = (await findAuditCostRaw(auditId))?.cost
+    resourceData = cost
     instruction = 'Analyze the Cost Management data for this Azure subscription as a senior DevOps engineer would. Find cost waste, unexpected spend spikes, and opportunities to reduce spend.'
+    const previous = await findPreviousAuditCostUsageRaw(auditId)
+    precomputedSignals = buildPrecomputedSignals({
+      costRows: cost?.actual_cost_rows,
+      inventory: (audit.raw_data as Record<string, unknown>)?.inventory as InventoryDataRaw | undefined,
+      previousCostRows: previous?.cost?.actual_cost_rows,
+      previousCostPeriod: previous?.cost ? { from: previous.cost.period_from, to: previous.cost.period_to } : undefined,
+    })
   } else if (scope.startsWith('usage:')) {
     const usageType = scope.slice('usage:'.length)
     const usageRaw = await findAuditUsageRaw(auditId)
-    const groups = buildUsageGroups(usageRaw?.metrics || [], usageType)
+    const allMetrics = usageRaw?.metrics || []
+    const groups = buildUsageGroups(allMetrics, usageType)
     resourceData = groups.length > 0 ? { type: usageType, groups } : undefined
     instruction = `Analyze the utilization metrics for "${usageType}" resources in this Azure subscription as a senior DevOps engineer would. Find idle, over-provisioned, or under-utilized resources.`
+    const previous = await findPreviousAuditCostUsageRaw(auditId)
+    const scopedMetrics = allMetrics.filter(m => resourceTypeSlug(m.resource_id) === usageType)
+    const previousScopedMetrics = (previous?.usage?.metrics || []).filter(m => resourceTypeSlug(m.resource_id) === usageType)
+    precomputedSignals = buildPrecomputedSignals({
+      usageMetrics: scopedMetrics,
+      previousUsageMetrics: previousScopedMetrics.length > 0 ? previousScopedMetrics : undefined,
+    })
   } else if (scope === 'usage') {
-    resourceData = (await findAuditCostUsageRaw(auditId))?.usage // legacy combined scope, kept for old cache entries only
+    const usage = (await findAuditCostUsageRaw(auditId))?.usage // legacy combined scope, kept for old cache entries only
+    resourceData = usage
     instruction = 'Analyze the Azure Monitor usage data for this subscription as a senior DevOps engineer would. Find idle, over-provisioned, or under-utilized resources.'
+    precomputedSignals = buildPrecomputedSignals({ usageMetrics: usage?.metrics })
   } else {
     resourceData = (audit.raw_data as Record<string, unknown> | undefined)?.[scope]
     instruction = `Analyze the "${scope}" resources in this Azure subscription as a senior DevOps engineer would. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues specific to this resource type.`
@@ -347,7 +451,9 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
   if (resourceData === undefined || resourceData === null) {
     return { error: `no data for resource type "${scope}" in this audit`, status: 400 }
   }
-  return { data: { [scope]: resourceData }, instruction: `${instruction}\n\n${DEEP_RESEARCH_DIRECTIVE}\n\n${SEVERITY_RUBRIC}` }
+  if (precomputedSignals) instruction += `\n\n${PRECOMPUTED_SIGNALS_NOTE}`
+  const data = { [scope]: resourceData, ...(precomputedSignals ? { precomputed_signals: precomputedSignals } : {}) }
+  return { data, instruction: `${instruction}\n\n${DEEP_RESEARCH_DIRECTIVE}\n\n${SEVERITY_RUBRIC}` }
 }
 
 // Persists a finished analysis for a scope — merges it into the cached

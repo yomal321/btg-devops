@@ -87,6 +87,30 @@ export async function findAuditCostUsageRaw(auditId: string): Promise<AuditCostU
   return rows[0] || null
 }
 
+export interface PreviousAuditCostUsage {
+  cost: CostDataRaw | null
+  usage: UsageDataRaw | null
+  created_at: string
+}
+
+// Finds the most recent PRIOR audit of the SAME subscription (by
+// created_at, same join shape as findSubscriptionFindingHistory in
+// models/findings.ts) and returns its cost/usage columns — used for
+// audit-over-audit cost/usage comparison ("$X this audit vs $Y last audit").
+// Returns null if this is the subscription's first audit.
+export async function findPreviousAuditCostUsageRaw(auditId: string): Promise<PreviousAuditCostUsage | null> {
+  const { rows } = await pool.query(
+    `SELECT prev.cost_data AS cost, prev.usage_data AS usage, prev.created_at
+     FROM audits cur
+     JOIN audits prev ON prev.subscription_id = cur.subscription_id AND prev.created_at < cur.created_at
+     WHERE cur.id = $1
+     ORDER BY prev.created_at DESC
+     LIMIT 1`,
+    [auditId]
+  )
+  return rows[0] || null
+}
+
 export async function findAuditResource(auditId: string, slug: string): Promise<unknown | null> {
   const { rows } = await pool.query(
     `SELECT raw_data -> $2 AS data FROM audits

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,21 @@ var usageMetricsByType = map[string][]string{
 	"microsoft.containerregistry/registries": {"TotalPullCount", "TotalPushCount"},
 	"microsoft.network/publicipaddresses":    {"BytesInDDoS", "PacketsInDDoS"},
 	"microsoft.cognitiveservices/accounts":   {"TotalCalls", "TotalErrors"},
+}
+
+// ArmTypeToSlug mirrors the dashboard's ARM_TYPE_TO_SLUG (dashboard/app/api/
+// utils/usage.ts) — kept in sync manually since one is Go and one is
+// TypeScript. Used to tell which "usage:<slug>" analysis scopes actually
+// have data after a collection run, so collect.go can auto-queue them.
+var ArmTypeToSlug = map[string]string{
+	"microsoft.documentdb/databaseaccounts":  "cosmosdb",
+	"microsoft.storage/storageaccounts":      "storage",
+	"microsoft.web/serverfarms":              "appserviceplan",
+	"microsoft.web/sites":                    "appservice",
+	"microsoft.keyvault/vaults":              "keyvault",
+	"microsoft.containerregistry/registries": "acr",
+	"microsoft.network/publicipaddresses":    "publicip",
+	"microsoft.cognitiveservices/accounts":   "cognitiveservices",
 }
 
 // UsageData holds raw Azure Monitor metric values per resource. No waste
@@ -260,4 +276,46 @@ func cleanMetricResult(resourceID string, metrics []*armmonitor.Metric) ([]json.
 		out = append(out, json.RawMessage(clean))
 	}
 	return out, nil
+}
+
+// armTypeFromResourceID recovers the ARM resource type from a full resource
+// ID's "/providers/{Namespace}/{Type}/" segment — mirrors resourceTypeSlug in
+// dashboard/app/api/utils/usage.ts, since Monitor metrics only carry the full
+// resource ID, not a clean type field.
+var armTypeSegment = regexp.MustCompile(`(?i)/providers/([^/]+)/([^/]+)/`)
+
+func armTypeFromResourceID(resourceID string) string {
+	m := armTypeSegment.FindStringSubmatch(resourceID)
+	if m == nil {
+		return ""
+	}
+	return strings.ToLower(m[1]) + "/" + strings.ToLower(m[2])
+}
+
+// UsageTypeSlugs returns the distinct dashboard resource-type slugs (e.g.
+// "cosmosdb", "storage") that actually have metric data in a UsageData
+// result — used by collect.go to auto-queue one "usage:<slug>" analysis
+// request per type with real data, instead of every configured type
+// regardless of whether Monitor returned anything.
+func UsageTypeSlugs(data *UsageData) []string {
+	if data == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var slugs []string
+	for _, raw := range data.Metrics {
+		var entry struct {
+			ResourceID string `json:"resource_id"`
+		}
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			continue
+		}
+		slug := ArmTypeToSlug[armTypeFromResourceID(entry.ResourceID)]
+		if slug == "" || seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		slugs = append(slugs, slug)
+	}
+	return slugs
 }
