@@ -83,9 +83,24 @@ export default function CostUsagePage() {
   const hasCost = summary.daily_cost.length > 0
   const hasUsage = summary.usage_types.length > 0
 
-  const totalCost = summary.daily_cost.reduce((s, d) => s + d.cost, 0)
+  // Total Spend KPI tile shows THIS MONTH only, not the full multi-month
+  // collected range (daily_cost/period_from/period_to can span ~90 days) —
+  // scoped to the calendar month of the latest collected day (period_to),
+  // since that's "the current audit's month" regardless of collection window.
+  // Avg Daily Spend stays based on the full collected period, unaffected.
+  const latestDate = summary.period_to || summary.daily_cost[summary.daily_cost.length - 1]?.date || ''
+  const thisMonthKey = latestDate.slice(0, 7) // 'YYYY-MM'
+  const thisMonthLabel = latestDate
+    ? new Date(`${thisMonthKey}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    : ''
+  const monthCost = summary.daily_cost.filter(d => d.date.startsWith(thisMonthKey))
+  const totalCost = monthCost.reduce((s, d) => s + d.cost, 0)
+  const monthStart = monthCost[0]?.date || ''
+  const monthEnd = monthCost[monthCost.length - 1]?.date || ''
+
+  const fullTotalCost = summary.daily_cost.reduce((s, d) => s + d.cost, 0)
   const daySpan = (new Date(summary.period_to).getTime() - new Date(summary.period_from).getTime()) / 86400000 || 1
-  const avgDaily = totalCost / daySpan
+  const avgDaily = fullTotalCost / daySpan
 
   return (
     <>
@@ -120,7 +135,12 @@ export default function CostUsagePage() {
               <KPICard
                 label="Total Spend"
                 value={hasCost ? formatCurrency(totalCost, summary.currency) : '—'}
-                sub={hasCost ? `${summary.period_from} to ${summary.period_to}` : 'no cost data'}
+                sub={hasCost ? (
+                  <>
+                    {thisMonthLabel}
+                    <div style={{ marginTop: '0.15rem' }}>{monthStart} to {monthEnd}</div>
+                  </>
+                ) : 'no cost data'}
                 accent="emerald"
               />
               <KPICard
