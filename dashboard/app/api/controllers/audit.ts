@@ -158,8 +158,16 @@ export async function createAnalysisRequestController(auditId: string, scope: st
 
   // Reuse an already-pending request for this exact scope rather than
   // enqueueing a duplicate — e.g. a double-click or a re-mounted poll.
+  //
+  // Still fire the routine trigger even on this reuse path: a click here is
+  // an explicit "run this now" from the user, and the row could have been
+  // sitting pending from BEFORE ROUTINE_TRIGGER_TOKEN was ever configured
+  // (or from an automated queue that never had a chance to wake anything) —
+  // in either case, an explicit click should always try to wake it, not
+  // silently rely on whatever already happened when the row was inserted.
   const latest = await findLatestAnalysisRequest(auditId, scope)
   if (latest && latest.status === 'pending') {
+    void triggerAnalyzerRoutine()
     return { data: { requestId: latest.id, status: latest.status }, status: 200 }
   }
 
