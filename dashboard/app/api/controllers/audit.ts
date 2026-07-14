@@ -2,6 +2,7 @@ import { findAllAudits, findAuditById, findAuditResource, findAuditRawData, find
 import { findResourceBySlug } from '../models/resource'
 import { insertAnalysisRequest, findLatestAnalysisRequest, findAnalysisRequestById } from '../models/analysisRequests'
 import { runAnalysis, getAnalysisForScope } from '../utils/claude'
+import { triggerAnalyzerRoutine } from '../utils/analyzerRoutine'
 import { LLMProvider } from '../utils/llm'
 import { buildUsageGroups, listUsageTypes } from '../utils/usage'
 import { computeRegionDistribution, computeCrossRegionMismatches } from '../utils/region'
@@ -163,6 +164,10 @@ export async function createAnalysisRequestController(auditId: string, scope: st
   }
 
   const request = await insertAnalysisRequest(auditId, scope)
+  // Best-effort: wakes the scheduled agent immediately instead of leaving a
+  // manually-queued request to sit until its next daily cron tick (see
+  // analyzerRoutine.ts) — never blocks the response on this.
+  void triggerAnalyzerRoutine()
   return { data: { requestId: request.id, status: request.status }, status: 201 }
 }
 
