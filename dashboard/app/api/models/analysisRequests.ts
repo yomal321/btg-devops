@@ -59,16 +59,65 @@ export async function findAnalysisRequestById(id: string): Promise<AnalysisReque
   return rows[0] || null
 }
 
+// SQL fragment matching cost/usage scopes ('cost', 'usage', 'usage:<type>')
+// for a given table alias's `scope` column — a function (not a plain
+// string) because it's needed against two different aliases below, and a
+// naive string.replace('scope', alias) would only touch the first of three
+// occurrences.
+function costUsageScopeSql(alias: string): string {
+  return `(${alias}.scope = 'cost' OR ${alias}.scope = 'usage' OR ${alias}.scope LIKE 'usage:%')`
+}
+
+export function isCostOrUsageScope(scope: string): boolean {
+  return scope === 'cost' || scope === 'usage' || scope.startsWith('usage:')
+}
+
 // Claimed by the MCP server's list_pending_requests() tool — oldest first,
 // so a backlog drains in request order rather than last-in-first-served.
+//
+// Cost/usage scopes for an audit are deliberately held back (excluded here)
+// as long as that SAME audit still has a pending non-cost/usage scope —
+// cost/usage findings (idle resources, waste, chains) are most useful once
+// the agent already has the full resource picture from analyzing the other
+// 12 resource types, so they're queued last rather than racing in parallel.
+// Once the last blocking scope resolves (done or failed), the cost/usage
+// rows for that audit satisfy the NOT EXISTS below and become claimable.
 export async function listPendingAnalysisRequests(limit = 20): Promise<AnalysisRequest[]> {
   const { rows } = await pool.query(
-    `SELECT ${REQUEST_COLS} FROM analysis_requests
-     WHERE status = 'pending'
-     ORDER BY requested_at ASC LIMIT $1`,
+    `SELECT ${REQUEST_COLS} FROM analysis_requests ar
+     WHERE ar.status = 'pending'
+       AND (
+         NOT ${costUsageScopeSql('ar')}
+         OR NOT EXISTS (
+           SELECT 1 FROM analysis_requests blocker
+           WHERE blocker.audit_id = ar.audit_id
+             AND blocker.status = 'pending'
+             AND NOT ${costUsageScopeSql('blocker')}
+         )
+       )
+     ORDER BY ar.requested_at ASC LIMIT $1`,
     [limit]
   )
   return rows
+}
+
+// True the moment an audit's cost/usage scopes become claimable: every
+// non-cost/usage scope has resolved (done or failed) AND at least one
+// cost/usage scope is still pending. Used right after a non-cost/usage
+// scope's save_analysis call to decide whether to wake the routine
+// immediately instead of leaving newly-unblocked cost/usage requests to
+// wait for its next cron tick.
+export async function hasNewlyUnblockedCostUsage(auditId: string): Promise<boolean> {
+  const isCostUsage = costUsageScopeSql('analysis_requests')
+  const { rows } = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE status = 'pending' AND NOT ${isCostUsage}) AS blocking_pending,
+       COUNT(*) FILTER (WHERE status = 'pending' AND ${isCostUsage}) AS cost_usage_pending
+     FROM analysis_requests WHERE audit_id = $1`,
+    [auditId]
+  )
+  const { blocking_pending, cost_usage_pending } = rows[0]
+  return Number(blocking_pending) === 0 && Number(cost_usage_pending) > 0
 }
 
 // True once every analysis_requests row for this audit has resolved

@@ -6,11 +6,13 @@ import {
   markAnalysisRequestDone,
   markAnalysisRequestFailed,
   hasNoPendingForAudit,
+  hasNewlyUnblockedCostUsage,
 } from '../models/analysisRequests'
 import { findSubscriptionFindingHistory } from '../models/findings'
 import { getScopedAuditData, saveAnalysisResult, type ClaudeAnalysis } from '../utils/claude'
 import { buildAuditSummaryEmail } from '../utils/auditSummaryEmail'
 import { sendMail, resolveNotificationRecipients } from '../utils/mailer'
+import { triggerAnalyzerRoutine } from '../utils/analyzerRoutine'
 
 // Thin MCP wrappers over the dashboard's existing model/util functions
 // (spec 8) — no business logic lives here. The scheduled Claude Code agent
@@ -146,16 +148,34 @@ export function registerTools(server: McpServer) {
         const pending = await findPendingAnalysisRequest(auditId, scope)
         if (pending) await markAnalysisRequestFailed(pending.id, message)
         await sendSummaryEmailIfAuditComplete(auditId)
+        await wakeRoutineIfCostUsageUnblocked(auditId)
         return { content: [{ type: 'text', text: JSON.stringify({ error: message }) }], isError: true }
       }
 
       const pending = await findPendingAnalysisRequest(auditId, scope)
       if (pending) await markAnalysisRequestDone(pending.id)
       await sendSummaryEmailIfAuditComplete(auditId)
+      await wakeRoutineIfCostUsageUnblocked(auditId)
 
       return { content: [{ type: 'text', text: JSON.stringify({ saved: true, requestId: pending?.id ?? null }) }] }
     }
   )
+}
+
+// Cost/usage requests are held back by listPendingAnalysisRequests until
+// every other scope for their audit resolves (see analysisRequests.ts) — so
+// the moment a non-cost/usage save_analysis call is the LAST one blocking,
+// the routine needs to be woken again immediately, or the now-unblocked
+// cost/usage requests just sit there until its next cron tick. Checked
+// after every save_analysis call (cheap no-op once an audit's cost/usage
+// scopes are already unblocked or don't exist). Best-effort, same as the
+// summary email: a failure here must never surface as an MCP tool error.
+async function wakeRoutineIfCostUsageUnblocked(auditId: string): Promise<void> {
+  try {
+    if (await hasNewlyUnblockedCostUsage(auditId)) await triggerAnalyzerRoutine()
+  } catch (e) {
+    console.warn('[analyzer-routine] wake-on-unblock check failed:', e instanceof Error ? e.message : e)
+  }
 }
 
 // One consolidated email per audit, not one per resource type — checked
