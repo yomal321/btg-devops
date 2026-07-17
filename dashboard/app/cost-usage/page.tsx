@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, TrendingUp } from 'lucide-react'
 import { Header } from '../components/Header'
 import { KPICard } from '../components/KPICard'
 import { AnalysisPanel } from '../components/AnalysisPanel'
 import { ChatDock } from '../components/ChatDock'
 import { CostTrendChart, TopServicesChart, formatCurrency } from '../components/CostCharts'
-import { UsageSection } from '../components/UsageSection'
+import { ZombieSpendList, SpendSpikesList, CostBreakdownTabs } from '../components/CostInsights'
+import { ResourceSelector } from '../components/ResourceSelector'
 import { KPISkeletonRow, ChartSkeleton } from '../components/Skeleton'
 import { api } from '../lib/api'
 import { shortId } from '../lib/utils'
@@ -131,7 +132,7 @@ export default function CostUsagePage() {
         ) : (
           <>
             {/* KPI tiles */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <KPICard
                 label="Total Spend"
                 value={hasCost ? formatCurrency(totalCost, summary.currency) : '—'}
@@ -155,6 +156,17 @@ export default function CostUsagePage() {
                 sub="for usage metrics"
                 accent="violet"
               />
+              <KPICard
+                label="30-Day Forecast"
+                icon={TrendingUp}
+                value={summary.signals.cost_forecast ? formatCurrency(summary.signals.cost_forecast.run_rate_next_30_days_usd, summary.currency) : '—'}
+                trend={summary.signals.cost_forecast ? `${summary.signals.cost_forecast.trend_daily_delta_usd >= 0 ? '+' : ''}${formatCurrency(summary.signals.cost_forecast.trend_daily_delta_usd, summary.currency)}/day` : undefined}
+                trendDir={summary.signals.cost_forecast && summary.signals.cost_forecast.trend_daily_delta_usd < 0 ? 'down' : 'up'}
+                sub={summary.signals.cost_forecast
+                  ? `trend-adjusted: ${formatCurrency(summary.signals.cost_forecast.trend_adjusted_next_30_days_usd, summary.currency)}`
+                  : 'not enough cost history yet'}
+                accent="amber"
+              />
             </div>
 
             {/* Cost charts */}
@@ -169,6 +181,30 @@ export default function CostUsagePage() {
               </div>
             )}
 
+            {/* Deterministic cost signals — computed the same way as the LLM's
+                precomputed_signals (see buildPrecomputedSignals in
+                api/utils/claude.ts), shown directly instead of only through
+                whatever the AI chooses to mention. */}
+            {hasCost && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <div className="glass" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  <ZombieSpendList findings={summary.signals.zombie_spend} currency={summary.currency} />
+                  <SpendSpikesList findings={summary.signals.spend_spikes} currency={summary.currency} />
+                </div>
+                <div className="glass" style={{ padding: '1.25rem' }}>
+                  <CostBreakdownTabs
+                    byResourceGroup={summary.signals.cost_by_resource_group}
+                    byTag={summary.signals.cost_by_tag}
+                    currency={summary.currency}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Jump to one resource's own cost/usage/AI-findings page, instead
+                of hunting across the all-resources cards above. */}
+            <ResourceSelector auditId={audit.id} resources={summary.resources} currency={summary.currency} />
+
             {/* AI Analysis — full width; chat lives in the floating ChatDock */}
             <AnalysisPanel
               auditId={audit.id}
@@ -177,9 +213,6 @@ export default function CostUsagePage() {
               hasCost={hasCost}
               usageTypes={summary.usage_types}
             />
-
-            {/* Resource Utilization — nothing loads until a type is picked */}
-            {hasUsage && <UsageSection auditId={audit.id} usageTypes={summary.usage_types} />}
           </>
         )}
       </div>

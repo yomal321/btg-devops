@@ -68,7 +68,7 @@ const severityTint = {
 
 // Extracted so the same card renders identically whether grouped by
 // resource group or shown as a flat list.
-function FindingCard({ f, canAnalyze, onToggleStatus }: {
+export function FindingCard({ f, canAnalyze, onToggleStatus }: {
   f: DisplayFinding
   canAnalyze: boolean
   onToggleStatus: (id: string, status: 'open' | 'dismissed') => void
@@ -171,6 +171,12 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   // under a different scope.
   const [dbFindings, setDbFindings] = useState<{ scope: string; rows: Finding[] } | null>(null)
   const pollCancelRef = useRef<(() => void) | null>(null)
+  // True when the most recently completed Analyze click was served from the
+  // per-scope cache (spec 14 — this scope's config hasn't changed since the
+  // last analyzed audit, so the prior findings were carried forward instead
+  // of a fresh agent pass). Distinct from the "Cached" badge below, which
+  // means something unrelated (an analysis result already exists to view).
+  const [servedFromCache, setServedFromCache] = useState(false)
 
   useEffect(() => {
     if (!currentAnalysis) return
@@ -189,28 +195,44 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   // instead of calling an LLM directly from this request, and polls until
   // the agent (via the MCP server) writes a result back. cancelledRef lets
   // an in-flight poll loop stop itself if the component unmounts mid-poll.
+  function applyAnalysisResult(slug: string, analysis: Analysis) {
+    setStore(s =>
+      slug === ALL_SCOPE
+        ? { ...s, all: analysis }
+        : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
+    )
+    api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
+  }
+
   async function analyzeScope(slug: string) {
     setRunning(true)
     setError('')
+    setServedFromCache(false)
     let cancelled = false
     const stop = () => { cancelled = true }
     pollCancelRef.current = stop
     try {
-      const { requestId, status } = await api.requestAnalysis(auditId, slug)
+      const { requestId, status, cacheHit } = await api.requestAnalysis(auditId, slug)
       let current = status
+      if (cacheHit) setServedFromCache(true)
+
+      // A cache hit (spec 14) resolves synchronously and can already be
+      // 'done' on this very first response — fetch and render it now
+      // instead of falling into the poll loop below, which only ever
+      // checks status AFTER the request was still 'pending'.
+      if (current === 'done') {
+        const poll = await api.getAnalysisRequest(auditId, requestId)
+        if (poll.analysis) applyAnalysisResult(slug, poll.analysis as unknown as Analysis)
+      }
+
       while (current === 'pending' && !cancelled) {
         await sleep(POLL_INTERVAL_MS)
         if (cancelled) break
         const poll = await api.getAnalysisRequest(auditId, requestId)
         current = poll.status
+        if (poll.cacheHit) setServedFromCache(true)
         if (current === 'done' && poll.analysis) {
-          const analysis = poll.analysis as unknown as Analysis
-          setStore(s =>
-            slug === ALL_SCOPE
-              ? { ...s, all: analysis }
-              : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
-          )
-          api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
+          applyAnalysisResult(slug, poll.analysis as unknown as Analysis)
         } else if (current === 'failed') {
           setError(poll.error_message || 'Analysis failed')
         }
@@ -402,6 +424,11 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>AI Analysis</h2>
         {currentAnalysis && (
           <Badge color="success" label={`Cached · ${currentScopeLabel} · ${new Date(currentAnalysis.generated_at).toLocaleDateString()}`} />
+        )}
+        {servedFromCache && !running && (
+          <span title="This scope's configuration is unchanged since the last analyzed audit — the prior findings were reused instead of running a fresh analysis.">
+            <Badge color="info" label="No changes since last audit" />
+          </span>
         )}
         {currentAnalysis && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', position: 'relative' }}>

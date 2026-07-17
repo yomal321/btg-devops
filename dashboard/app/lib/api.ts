@@ -56,8 +56,8 @@ export const api = {
 
   getAnalysisProgress: (auditId: string) =>
     apiFetch<{
-      total: number; done: number; pending: number; failed: number
-      scopes: { scope: string; status: 'pending' | 'done' | 'failed' }[]
+      total: number; done: number; pending: number; failed: number; cached: number
+      scopes: { scope: string; status: 'pending' | 'done' | 'failed'; cache_hit: boolean }[]
     }>(`/api/audits/${auditId}/analysis-progress`),
 
   shareAnalysis: (auditId: string, scope: string, roles: string[], userIds: string[]) =>
@@ -74,6 +74,12 @@ export const api = {
 
   getUsageSummary: (id: string, type: string) =>
     apiFetch<import('../types').UsageSummary>(`/api/audits/${id}/usage-summary?type=${encodeURIComponent(type)}`),
+
+  getResourceDetail: (id: string, resourceId: string) =>
+    apiFetch<import('../types').ResourceDetail>(`/api/audits/${id}/resource-detail?resourceId=${encodeURIComponent(resourceId)}`),
+
+  getResourceTypeSummary: (id: string, type: string) =>
+    apiFetch<import('../types').ResourceTypeSummary>(`/api/audits/${id}/resource-type-summary?type=${encodeURIComponent(type)}`),
 
   getRegionSummary: (id: string) =>
     apiFetch<import('../types').RegionSummary>(`/api/audits/${id}/region-summary`),
@@ -93,7 +99,7 @@ export const api = {
   // Queues an analysis run for the scheduled Claude Code agent to pick up
   // (spec 8) instead of calling an LLM directly from this request.
   requestAnalysis: (auditId: string, scope: string) =>
-    apiFetch<{ requestId: string; status: 'pending' | 'done' | 'failed' }>(
+    apiFetch<{ requestId: string; status: 'pending' | 'done' | 'failed'; cacheHit: boolean }>(
       `/api/audits/${auditId}/analysis-request`,
       { method: 'POST', body: JSON.stringify({ scope }) }
     ),
@@ -104,6 +110,7 @@ export const api = {
       status: 'pending' | 'done' | 'failed'
       error_message?: string | null
       analysis?: Record<string, unknown>
+      cacheHit: boolean
     }>(`/api/audits/${auditId}/analysis-request/${requestId}`),
 
   listFindings: (auditId: string, scope?: string) =>

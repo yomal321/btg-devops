@@ -21,6 +21,34 @@ export async function findFindingsByAudit(auditId: string, scope?: string): Prom
   return rows
 }
 
+// findFindingsByAuditAndResource narrows findFindingsByAudit's WHERE clause
+// down to one resource by name — used by the resource-detail page so it
+// shows only the AI findings that mention this resource, not the audit's
+// full findings list.
+export async function findFindingsByAuditAndResource(auditId: string, resourceName: string): Promise<Finding[]> {
+  const { rows } = await pool.query(
+    `SELECT ${FINDING_COLS}
+     FROM findings WHERE audit_id = $1 AND resource_name = $2
+     ORDER BY CASE severity WHEN 'Critical' THEN 1 WHEN 'Warning' THEN 2 ELSE 3 END, created_at ASC`,
+    [auditId, resourceName]
+  )
+  return rows
+}
+
+// findFindingsByAuditAndResourceType narrows findFindingsByAudit down to one
+// resource TYPE (the dashboard slug already stored on each finding, e.g.
+// "cosmosdb") — used by the resource-type summary page to show findings
+// combined across every resource of that type.
+export async function findFindingsByAuditAndResourceType(auditId: string, resourceType: string): Promise<Finding[]> {
+  const { rows } = await pool.query(
+    `SELECT ${FINDING_COLS}
+     FROM findings WHERE audit_id = $1 AND resource_type = $2
+     ORDER BY CASE severity WHEN 'Critical' THEN 1 WHEN 'Warning' THEN 2 ELSE 3 END, created_at ASC`,
+    [auditId, resourceType]
+  )
+  return rows
+}
+
 export async function insertFinding(
   auditId: string,
   finding: {

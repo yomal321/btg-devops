@@ -1,3 +1,6 @@
+import type { ZombieSpendFinding, SpendSpikeFinding, CostForecast, ResourceGroupCostRollup, TagCostRollup } from '../utils/costInsights'
+import type { IdleResourceFinding } from '../utils/usageInsights'
+
 export interface User {
   id: string
   email: string
@@ -173,6 +176,70 @@ export interface CostSummary {
   total_resources_sampled: number
   usage_types: { slug: string; count: number }[]
   claude_analysis: Record<string, unknown> | null
+  signals: CostUsageSignals
+  resources: ResourceListEntry[]
+  resources_truncated: boolean
+}
+
+// One row per distinct resource seen in this audit's cost rows or usage
+// metrics — feeds the Cost & Usage page's resource picker, which links out
+// to the per-resource detail page (getResourceDetailController below).
+export interface ResourceListEntry {
+  resource_id: string
+  resource_name: string
+  resource_type: string | null
+  total_cost_usd: number
+  has_usage: boolean
+  signals: ('zombie' | 'spike' | 'idle')[]
+}
+
+// Everything about ONE resource, for the resource-detail page — same
+// detectors as CostUsageSignals/getCostSummaryController, filtered down to a
+// single resource_id instead of covering the whole audit.
+export interface ResourceDetail {
+  resource_id: string
+  resource_name: string
+  resource_type: string | null
+  resource_group: string | null
+  currency: string
+  daily_cost: { date: string; cost: number }[]
+  total_cost_usd: number
+  avg_daily_cost_usd: number
+  usage_metrics: { metric_name: string; unit: string; avg: number | null; total: number | null }[]
+  zombie: ZombieSpendFinding | null
+  spend_spikes: SpendSpikeFinding[]
+  idle: IdleResourceFinding[]
+  findings: Finding[]
+}
+
+// Combined view across every resource of ONE type (e.g. all Cosmos DB
+// accounts) — same detectors again, filtered by resource_type instead of one
+// resource_id, plus the individual resources of that type for the
+// "Individual" tab's selector.
+export interface ResourceTypeSummary {
+  resource_type: string
+  currency: string
+  total_cost_usd: number
+  resource_count: number
+  flagged_count: number
+  avg_utilization_pct: number | null
+  daily_cost: { date: string; cost: number }[]
+  findings: Finding[]
+  resources: ResourceListEntry[]
+}
+
+// Same deterministic detectors that feed buildPrecomputedSignals for the LLM
+// (see utils/claude.ts) — reused here so the dashboard can show them as
+// dedicated UI regardless of whether/when the "Analyze" step ran. Capped in
+// getCostSummaryController before being attached; the underlying detector
+// functions themselves stay uncapped since the LLM path also uses them.
+export interface CostUsageSignals {
+  zombie_spend: ZombieSpendFinding[]
+  spend_spikes: SpendSpikeFinding[]
+  cost_forecast: CostForecast | null
+  idle_resources: IdleResourceFinding[]
+  cost_by_resource_group: ResourceGroupCostRollup[]
+  cost_by_tag: TagCostRollup[]
 }
 
 export interface UsageSummary {

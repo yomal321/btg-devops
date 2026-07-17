@@ -37,7 +37,7 @@ export interface ZombieSpendFinding {
 // segment (e.g. ".../storageAccounts/mystorage123" -> "mystorage123") —
 // the same trailing segment ARM uses as the resource's `name` field, which
 // is all InventoryResource retains for matching.
-function resourceNameFromId(resourceId: string): string {
+export function resourceNameFromId(resourceId: string): string {
   const parts = resourceId.split('/').filter(Boolean)
   return parts[parts.length - 1] || ''
 }
@@ -272,7 +272,7 @@ export interface CostUsageWasteFinding {
 // percentage does. Cosmos DB's NormalizedRUConsumption and App Service
 // Plan's Cpu/MemoryPercentage are the only two metrics collected today that
 // qualify (see usageInsights.ts's IDLE_RULES for the full metric set).
-const UTILIZATION_METRICS_BY_SLUG: Record<string, string[]> = {
+export const UTILIZATION_METRICS_BY_SLUG: Record<string, string[]> = {
   cosmosdb: ['NormalizedRUConsumption'],
   appserviceplan: ['CpuPercentage', 'MemoryPercentage'],
 }
@@ -500,7 +500,7 @@ export interface TagCostRollup {
 // see cleaner.go). Returns null when the inventory was truncated, so
 // callers can bail out rather than produce a rollup with silently missing
 // resources folded into "ungrouped"/"untagged."
-function buildResourceInfoLookup(inventory: InventoryDataRaw | null | undefined): Map<string, InventoryResource> | null {
+export function buildResourceInfoLookup(inventory: InventoryDataRaw | null | undefined): Map<string, InventoryResource> | null {
   if (!inventory || inventory.truncated) return null
   const lookup = new Map<string, InventoryResource>()
   for (const r of inventory.resources) lookup.set(r.name.toLowerCase(), r)

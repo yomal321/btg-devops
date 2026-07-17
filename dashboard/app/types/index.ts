@@ -117,6 +117,115 @@ export interface CostSummary {
   total_resources_sampled: number
   usage_types: { slug: string; count: number }[]
   claude_analysis: Record<string, unknown> | null
+  signals: CostUsageSignals
+  resources: ResourceListEntry[]
+  resources_truncated: boolean
+}
+
+export interface ResourceListEntry {
+  resource_id: string
+  resource_name: string
+  resource_type: string | null
+  total_cost_usd: number
+  has_usage: boolean
+  signals: ('zombie' | 'spike' | 'idle')[]
+}
+
+// Everything about ONE resource, for the resource-detail page — manually
+// kept in sync with the backend's ResourceDetail (app/api/types/index.ts).
+export interface ResourceDetail {
+  resource_id: string
+  resource_name: string
+  resource_type: string | null
+  resource_group: string | null
+  currency: string
+  daily_cost: { date: string; cost: number }[]
+  total_cost_usd: number
+  avg_daily_cost_usd: number
+  usage_metrics: { metric_name: string; unit: string; avg: number | null; total: number | null }[]
+  zombie: ZombieSpendFinding | null
+  spend_spikes: SpendSpikeFinding[]
+  idle: IdleResourceFinding[]
+  findings: Finding[]
+}
+
+// Manually kept in sync with the backend's ResourceTypeSummary.
+export interface ResourceTypeSummary {
+  resource_type: string
+  currency: string
+  total_cost_usd: number
+  resource_count: number
+  flagged_count: number
+  avg_utilization_pct: number | null
+  daily_cost: { date: string; cost: number }[]
+  findings: Finding[]
+  resources: ResourceListEntry[]
+}
+
+// Manually kept in sync with the backend's CostUsageSignals
+// (app/api/types/index.ts) — same pattern as Finding/DataGapEntry above.
+// These are the same deterministic detectors fed to the LLM via
+// buildPrecomputedSignals (app/api/utils/claude.ts), surfaced here directly.
+export interface ZombieSpendFinding {
+  resource_name: string
+  resource_id: string
+  last_service_name: string
+  total_cost_usd: number
+  first_cost_date: string
+  last_cost_date: string
+  billed_days: number
+}
+
+export interface SpendSpikeFinding {
+  resource_name: string
+  resource_id: string
+  service_name: string
+  spike_date: string
+  spike_amount_usd: number
+  baseline_daily_avg_usd: number
+  z_score: number | null
+  flat_baseline: boolean
+}
+
+export interface CostForecast {
+  period_from: string
+  period_to: string
+  historical_daily_avg_usd: number
+  run_rate_next_30_days_usd: number
+  trend_daily_delta_usd: number
+  trend_adjusted_next_30_days_usd: number
+}
+
+export interface IdleResourceFinding {
+  resource_id: string
+  resource_name: string
+  resource_type: string
+  metric_name: string
+  avg: number | null
+  total: number | null
+  reason: string
+}
+
+export interface ResourceGroupCostRollup {
+  resource_group: string
+  total_cost_usd: number
+  resource_count: number
+}
+
+export interface TagCostRollup {
+  tag_key: string
+  tag_value: string
+  total_cost_usd: number
+  resource_count: number
+}
+
+export interface CostUsageSignals {
+  zombie_spend: ZombieSpendFinding[]
+  spend_spikes: SpendSpikeFinding[]
+  cost_forecast: CostForecast | null
+  idle_resources: IdleResourceFinding[]
+  cost_by_resource_group: ResourceGroupCostRollup[]
+  cost_by_tag: TagCostRollup[]
 }
 
 export interface UsageSummary {
