@@ -13,16 +13,85 @@ export interface AnalysisRequest {
   error_message: string | null
   requested_at: Date
   completed_at: Date | null
+  cache_hit: boolean
 }
 
-const REQUEST_COLS = `id, audit_id, scope, status, error_message, requested_at, completed_at`
+const REQUEST_COLS = `id, audit_id, scope, status, error_message, requested_at, completed_at, cache_hit`
 
-export async function insertAnalysisRequest(auditId: string, scope: string): Promise<AnalysisRequest> {
+export async function insertAnalysisRequest(auditId: string, scope: string, cacheHit = false): Promise<AnalysisRequest> {
   const { rows } = await pool.query(
-    `INSERT INTO analysis_requests (audit_id, scope) VALUES ($1, $2) RETURNING ${REQUEST_COLS}`,
-    [auditId, scope]
+    `INSERT INTO analysis_requests (audit_id, scope, cache_hit) VALUES ($1, $2, $3) RETURNING ${REQUEST_COLS}`,
+    [auditId, scope, cacheHit]
   )
   return rows[0]
+}
+
+// Forces a real re-analysis of a scope after this many CONSECUTIVE cache
+// hits (spec 14 A5) — protects against a hashing bug (or future data
+// normalization) silently pinning stale findings forever, and lets
+// playbook/checklist improvements eventually reach unchanged resources too.
+// Keep in sync with the Go CLI's db.CacheStalenessCeiling
+// (CLI Engine/internal/db/analysis_requests.go) — both sides must agree so
+// a scope doesn't cache-hit indefinitely on one path while capped on the
+// other.
+const CACHE_STALENESS_CEILING = 7
+
+// Counts how many of the most recent PRIOR audits of this subscription
+// (going backward from auditId) have a cache_hit=true request for this exact
+// scope, stopping at the first real (non-cached) analysis or once it
+// reaches CACHE_STALENESS_CEILING.
+async function trailingCacheHitStreak(auditId: string, scope: string): Promise<number> {
+  const { rows } = await pool.query(
+    `SELECT ar.cache_hit
+     FROM analysis_requests ar
+     JOIN audits a ON a.id = ar.audit_id
+     WHERE a.subscription_id = (SELECT subscription_id FROM audits WHERE id = $1)
+       AND a.created_at < (SELECT created_at FROM audits WHERE id = $1)
+       AND ar.scope = $2
+     ORDER BY a.created_at DESC
+     LIMIT $3`,
+    [auditId, scope, CACHE_STALENESS_CEILING]
+  )
+  let streak = 0
+  for (const row of rows) {
+    if (!row.cache_hit) break
+    streak++
+  }
+  return streak
+}
+
+// True if `scope`'s config hash on this audit matches the hash on the most
+// recent PRIOR audit of the same subscription that has a 'done' request for
+// this same scope (spec 14 — per-scope analysis cache), AND the staleness
+// ceiling hasn't been reached. Only meaningful for resource-type scopes —
+// cost/usage/"all" have no entry in scope_hashes (by design, since cost/
+// usage data changes every audit) and this always returns false for them,
+// which is the correct "never cache" behavior.
+export async function checkScopeCacheHit(auditId: string, scope: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT (cur.scope_hashes ->> $2) AS current_hash, (prev.scope_hashes ->> $2) AS prev_hash
+     FROM audits cur
+     LEFT JOIN LATERAL (
+       SELECT a.scope_hashes
+       FROM audits a
+       WHERE a.subscription_id = cur.subscription_id
+         AND a.created_at < cur.created_at
+         AND EXISTS (
+           SELECT 1 FROM analysis_requests ar
+           WHERE ar.audit_id = a.id AND ar.scope = $2 AND ar.status = 'done'
+         )
+       ORDER BY a.created_at DESC
+       LIMIT 1
+     ) prev ON true
+     WHERE cur.id = $1`,
+    [auditId, scope]
+  )
+  const row = rows[0]
+  if (!row || !row.current_hash || !row.prev_hash) return false
+  if (row.current_hash !== row.prev_hash) return false
+
+  const streak = await trailingCacheHitStreak(auditId, scope)
+  return streak < CACHE_STALENESS_CEILING
 }
 
 // The most recent request for this audit+scope — callers use this to avoid
@@ -49,6 +118,20 @@ export async function findPendingAnalysisRequest(auditId: string, scope: string)
     [auditId, scope]
   )
   return rows[0] || null
+}
+
+// Pending requests marked cache_hit=true (by either the Go auto-queue path
+// or createAnalysisRequestController) — the analysis-cache resolver
+// (utils/analysisCache.ts) claims these to carry findings forward instead of
+// leaving them for the scheduled agent to spend a real pass on.
+export async function findPendingCacheHitRequests(limit = 50): Promise<AnalysisRequest[]> {
+  const { rows } = await pool.query(
+    `SELECT ${REQUEST_COLS} FROM analysis_requests
+     WHERE status = 'pending' AND cache_hit = TRUE
+     ORDER BY requested_at ASC LIMIT $1`,
+    [limit]
+  )
+  return rows
 }
 
 export async function findAnalysisRequestById(id: string): Promise<AnalysisRequest | null> {
@@ -152,21 +235,27 @@ export interface AnalysisProgress {
   done: number
   pending: number
   failed: number
-  scopes: { scope: string; status: 'pending' | 'done' | 'failed' }[]
+  cached: number
+  scopes: { scope: string; status: 'pending' | 'done' | 'failed'; cache_hit: boolean }[]
 }
 
 // Backs the dashboard's live "N of M resource types analyzed" progress bar
 // AND its per-resource-type checklist for one audit — the request-per-scope
 // rows already exist (queued by collect.go or a manual Analyze click), this
-// just summarizes and lists them.
+// just summarizes and lists them. cache_hit is surfaced (spec 14 A7) so the
+// UI can show a scope was served from cache rather than freshly analyzed —
+// without this, a "done" result for an unchanged scope would look identical
+// to a fresh agent pass, which reads as suspiciously fast/shallow rather
+// than as the cache working as intended.
 export async function findAnalysisProgressForAudit(auditId: string): Promise<AnalysisProgress> {
   const { rows } = await pool.query(
-    `SELECT scope, status FROM analysis_requests WHERE audit_id = $1 ORDER BY requested_at ASC`,
+    `SELECT scope, status, cache_hit FROM analysis_requests WHERE audit_id = $1 ORDER BY requested_at ASC`,
     [auditId]
   )
-  const progress: AnalysisProgress = { total: rows.length, done: 0, pending: 0, failed: 0, scopes: rows }
+  const progress: AnalysisProgress = { total: rows.length, done: 0, pending: 0, failed: 0, cached: 0, scopes: rows }
   for (const row of rows) {
     progress[row.status as 'done' | 'pending' | 'failed']++
+    if (row.cache_hit) progress.cached++
   }
   return progress
 }

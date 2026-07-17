@@ -13,6 +13,7 @@ import { getScopedAuditData, saveAnalysisResult, type ClaudeAnalysis } from '../
 import { buildAuditSummaryEmail } from '../utils/auditSummaryEmail'
 import { sendMail, resolveNotificationRecipients } from '../utils/mailer'
 import { triggerAnalyzerRoutine } from '../utils/analyzerRoutine'
+import { resolveCachedAnalysisRequests, listChangedScopes, getCachedScopeAnalysis } from '../utils/analysisCache'
 
 // Thin MCP wrappers over the dashboard's existing model/util functions
 // (spec 8) — no business logic lives here. The scheduled Claude Code agent
@@ -73,6 +74,10 @@ export function registerTools(server: McpServer) {
       },
     },
     async ({ limit }) => {
+      // Resolve any cache_hit requests first (spec 14) — their findings get
+      // carried forward from a prior audit with no agent time spent, so they
+      // never show up in the list below for the agent to work on.
+      await resolveCachedAnalysisRequests(limit)
       const rows = await listPendingAnalysisRequests(limit)
       return { content: [{ type: 'text', text: JSON.stringify(rows) }] }
     }
@@ -93,6 +98,35 @@ export function registerTools(server: McpServer) {
         return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: true }
       }
       return { content: [{ type: 'text', text: JSON.stringify(result) }] }
+    }
+  )
+
+  server.registerTool(
+    'list_changed_scopes',
+    {
+      description: 'For the "all"-scope parallel fan-out only (spec 13): lists every resource-type scope this audit collected data for, each marked whether its config changed since the last audit whose analysis of that scope completed. A scope with changed=false should be resolved via get_cached_scope_analysis instead of spawning a per-type agent for it — do not analyze it yourself.',
+      inputSchema: {
+        auditId: z.string().describe('The audit UUID'),
+      },
+    },
+    async ({ auditId }) => {
+      const rows = await listChangedScopes(auditId)
+      return { content: [{ type: 'text', text: JSON.stringify(rows) }] }
+    }
+  )
+
+  server.registerTool(
+    'get_cached_scope_analysis',
+    {
+      description: 'For the "all"-scope parallel fan-out only (spec 13): returns the already-saved analysis (summary + findings) for a scope list_changed_scopes reported as unchanged, from the most recent prior audit whose analysis of that scope completed. Use this INSTEAD OF spawning a per-type agent for that scope, and mark it carried_forward: true when passing it to synthesis. Returns null if no usable prior analysis exists — fall back to analyzing the scope normally in that case.',
+      inputSchema: {
+        auditId: z.string().describe('The audit UUID'),
+        scope: z.string().describe('The resource-type scope to fetch the cached analysis for'),
+      },
+    },
+    async ({ auditId, scope }) => {
+      const analysis = await getCachedScopeAnalysis(auditId, scope)
+      return { content: [{ type: 'text', text: JSON.stringify(analysis) }] }
     }
   )
 

@@ -59,6 +59,15 @@ ALTER TABLE audits ADD COLUMN IF NOT EXISTS usage_data JSONB;
 -- so it never shows stale text on a finished audit.
 ALTER TABLE audits ADD COLUMN IF NOT EXISTS current_step TEXT;
 
+-- scope_hashes holds one SHA-256 hex digest per resource-type scope (storage,
+-- iam, nsg, ...), keyed the same as raw_data's own keys, computed over that
+-- scope's cleaned config JSON only — cost_data/usage_data are excluded since
+-- they change by nature every audit (rolling cost history, metrics) and
+-- would never hit a cache hit. Unchanged hash vs. the previous analyzed audit
+-- for the same subscription means that scope's config genuinely didn't
+-- change, letting the analyzer skip re-analyzing it (spec 14).
+ALTER TABLE audits ADD COLUMN IF NOT EXISTS scope_hashes JSONB;
+
 CREATE TABLE IF NOT EXISTS findings (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   audit_id        UUID NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
@@ -180,6 +189,15 @@ CREATE TABLE IF NOT EXISTS analysis_requests (
   requested_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   completed_at  TIMESTAMPTZ
 );
+
+-- cache_hit marks a request whose scope's config hash (audits.scope_hashes)
+-- matched the most recent PRIOR audit of the same subscription that has a
+-- 'done' request for this same scope (spec 14 — per-scope analysis cache).
+-- Set at insert time by whatever created the row (Go auto-queue on collect,
+-- or the dashboard's manual Analyze button) — never changed afterward. It is
+-- only a marker for the analyzer/UI to act on later (carry-forward findings
+-- instead of spending agent time); this column alone does not skip anything.
+ALTER TABLE analysis_requests ADD COLUMN IF NOT EXISTS cache_hit BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

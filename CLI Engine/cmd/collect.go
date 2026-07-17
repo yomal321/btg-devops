@@ -242,6 +242,14 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		"subscription_id": subID,
 	}
 	resourceCounts := map[string]int{}
+	// scopeHashes holds one SHA-256 per resource-type scope that actually
+	// collected data, used by the analyzer to skip re-analyzing a scope
+	// whose config hasn't changed since the previous audit (spec 14). A
+	// scope is deliberately left out of this map when its extractor failed
+	// — an absent hash can never look like a "match" against a prior audit,
+	// so a failed extraction always forces a real re-analysis rather than
+	// silently caching stale/missing data.
+	scopeHashes := map[string]string{}
 	var extractErrors []string
 	total := len(allExtractors)
 
@@ -260,6 +268,11 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		}
 		rawData[e.key] = data
 		resourceCounts[e.key] = countResources(data)
+		if hash, err := extractors.ScopeHash(data); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: hashing %s: %v\n", e.key, err)
+		} else {
+			scopeHashes[e.key] = hash
+		}
 	}
 
 	// Cost and Usage are saved into their own columns (see SaveCostUsageData
@@ -315,7 +328,12 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("json marshal failed: %v", err))
 		return fmt.Errorf("marshaling resource counts: %w", err)
 	}
-	if err := db.CompleteAudit(ctx, pool, auditID, json.RawMessage(rawJSON), json.RawMessage(countsJSON)); err != nil {
+	hashesJSON, err := json.Marshal(scopeHashes)
+	if err != nil {
+		failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("json marshal failed: %v", err))
+		return fmt.Errorf("marshaling scope hashes: %w", err)
+	}
+	if err := db.CompleteAudit(ctx, pool, auditID, json.RawMessage(rawJSON), json.RawMessage(countsJSON), json.RawMessage(hashesJSON)); err != nil {
 		// CompleteAudit failed, so the row is stuck at status="running" —
 		// mark it failed instead of leaving it stuck forever.
 		failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("completing audit failed: %v", err))
@@ -326,11 +344,35 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	// collected data, so the scheduled MCP-server analyzer has something to
 	// process without anyone clicking "Analyze" in the dashboard. Best-effort
 	// — a queuing failure here shouldn't fail an otherwise-successful audit.
-	var scopesToQueue []string
+	//
+	// Each resource-type scope is checked against the last audit that
+	// actually finished analyzing it (spec 14 — per-scope analysis cache):
+	// an identical hash means that scope's config genuinely hasn't changed,
+	// so it's queued with cache_hit=true for the analyzer to carry findings
+	// forward instead of spending agent time re-deriving the same result.
+	// cost/usage/"all" are never in scopeHashes, so they always queue as a
+	// normal (non-cached) request — by design, per spec 14.
+	var scopesToQueue []db.ScopeToQueue
 	for _, e := range allExtractors {
-		if resourceCounts[e.key] > 0 {
-			scopesToQueue = append(scopesToQueue, e.key)
+		if resourceCounts[e.key] == 0 {
+			continue
 		}
+		cacheHit := false
+		if hash, ok := scopeHashes[e.key]; ok {
+			if prevHash, found, err := db.PreviousAnalyzedScopeHash(ctx, pool, sub.SubscriptionID, auditID, e.key); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: cache check for %s: %v\n", e.key, err)
+			} else if found && prevHash == hash {
+				// Staleness ceiling (spec 14 A5): a scope that already
+				// cache-hit db.CacheStalenessCeiling times in a row forces a
+				// real re-analysis now instead of caching indefinitely.
+				if streak, err := db.TrailingCacheHitStreak(ctx, pool, sub.SubscriptionID, auditID, e.key); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: cache streak check for %s: %v\n", e.key, err)
+				} else if streak < db.CacheStalenessCeiling {
+					cacheHit = true
+				}
+			}
+		}
+		scopesToQueue = append(scopesToQueue, db.ScopeToQueue{Scope: e.key, CacheHit: cacheHit})
 	}
 	// Cost and usage are extracted separately (see below) and previously
 	// never got queued at all — the scheduled agent only ever saw the 12
@@ -338,10 +380,10 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	// audit. Queue "cost" whenever any cost rows came back, and one
 	// "usage:<slug>" per resource type that actually has metric data.
 	if costData != nil && costData.TotalRows > 0 {
-		scopesToQueue = append(scopesToQueue, "cost")
+		scopesToQueue = append(scopesToQueue, db.ScopeToQueue{Scope: "cost"})
 	}
 	for _, slug := range extractors.UsageTypeSlugs(usageData) {
-		scopesToQueue = append(scopesToQueue, "usage:"+slug)
+		scopesToQueue = append(scopesToQueue, db.ScopeToQueue{Scope: "usage:" + slug})
 	}
 	if err := db.QueueAnalysisRequests(ctx, pool, auditID, scopesToQueue); err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)

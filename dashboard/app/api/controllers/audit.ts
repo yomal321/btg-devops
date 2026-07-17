@@ -1,12 +1,22 @@
 import { findAllAudits, findAuditById, findAuditResource, findAuditRawData, findAuditCostRaw, findAuditUsageRaw, updateClaudeAnalysis, insertAudit, updateAudit, deleteAudit, clearClaudeAnalysis, findAnalysisById } from '../models/audit'
 import { findResourceBySlug } from '../models/resource'
-import { insertAnalysisRequest, findLatestAnalysisRequest, findAnalysisRequestById } from '../models/analysisRequests'
+import { insertAnalysisRequest, findLatestAnalysisRequest, findAnalysisRequestById, checkScopeCacheHit, isCostOrUsageScope, markAnalysisRequestDone } from '../models/analysisRequests'
 import { runAnalysis, getAnalysisForScope } from '../utils/claude'
 import { triggerAnalyzerRoutine } from '../utils/analyzerRoutine'
+import { carryForwardCachedAnalysis } from '../utils/analysisCache'
 import { LLMProvider } from '../utils/llm'
 import { buildUsageGroups, listUsageTypes } from '../utils/usage'
 import { computeRegionDistribution, computeCrossRegionMismatches } from '../utils/region'
 import { CostSummary, UsageSummary, RegionSummary } from '../types'
+import {
+  detectZombieSpend, detectSpendSpikes, forecastCost,
+  rollupCostByResourceGroup, rollupCostByTag, UTILIZATION_METRICS_BY_SLUG,
+  resourceNameFromId, buildResourceInfoLookup, InventoryDataRaw,
+} from '../utils/costInsights'
+import { detectIdleResources } from '../utils/usageInsights'
+import { resourceTypeSlug, summarizeMetric } from '../utils/usage'
+import { findFindingsByAuditAndResource, findFindingsByAuditAndResourceType } from '../models/findings'
+import { ResourceListEntry, ResourceDetail, ResourceTypeSummary, CostRow, UsageMetricRaw } from '../types'
 
 // Coerce an untrusted provider string from the request into a valid provider,
 // or undefined (which makes runAnalysis/runChat fall back to their default).
@@ -61,12 +71,69 @@ export async function triggerAuditController() {
 // cost_data (its own column — never touches the 12-resource-type raw_data
 // blob) and lists which usage resource types have data, so the frontend can
 // populate a type dropdown without fetching all usage data up front.
+const SIGNAL_MAX_ZOMBIE_SPEND = 20
+const SIGNAL_MAX_SPEND_SPIKES = 20
+const SIGNAL_MAX_IDLE_RESOURCES = 30
+const SIGNAL_MAX_ROLLUP_ROWS = 15
+const SIGNAL_MAX_RESOURCES = 300
+
+// Builds one row per distinct resource seen in cost rows or usage metrics,
+// annotated with which of the already-computed signals (zombie/spike/idle)
+// flag it — feeds the Cost & Usage page's resource picker. Sorted by cost
+// desc so the highest-spend resources surface first in an unfiltered list.
+function buildResourceList(
+  costRows: CostRow[],
+  usageMetrics: UsageMetricRaw[],
+  signals: {
+    zombieSpend: { resource_id: string }[]
+    spendSpikes: { resource_id: string }[]
+    idleResources: { resource_id: string }[]
+  }
+): ResourceListEntry[] {
+  const zombieIds = new Set(signals.zombieSpend.map(f => f.resource_id))
+  const spikeIds = new Set(signals.spendSpikes.map(f => f.resource_id))
+  const idleIds = new Set(signals.idleResources.map(f => f.resource_id))
+
+  const byId = new Map<string, { cost: number; hasUsage: boolean }>()
+  for (const row of costRows) {
+    if (!row.ResourceId) continue
+    const entry = byId.get(row.ResourceId) || { cost: 0, hasUsage: false }
+    entry.cost += row.Cost
+    byId.set(row.ResourceId, entry)
+  }
+  for (const m of usageMetrics) {
+    const entry = byId.get(m.resource_id) || { cost: 0, hasUsage: false }
+    entry.hasUsage = true
+    byId.set(m.resource_id, entry)
+  }
+
+  return Array.from(byId.entries())
+    .map(([resourceId, { cost, hasUsage }]) => {
+      const flags: ('zombie' | 'spike' | 'idle')[] = []
+      if (zombieIds.has(resourceId)) flags.push('zombie')
+      if (spikeIds.has(resourceId)) flags.push('spike')
+      if (idleIds.has(resourceId)) flags.push('idle')
+      return {
+        resource_id: resourceId,
+        resource_name: resourceNameFromId(resourceId),
+        resource_type: resourceTypeSlug(resourceId),
+        total_cost_usd: Math.round(cost * 100) / 100,
+        has_usage: hasUsage,
+        signals: flags,
+      }
+    })
+    .sort((a, b) => b.total_cost_usd - a.total_cost_usd)
+}
+
 export async function getCostSummaryController(auditId: string) {
-  // cost_data and usage_data are independent columns — fetching them in
-  // parallel means total wait is the slower of the two, not the sum.
-  const [raw, usage] = await Promise.all([
+  // cost_data, usage_data, and the inventory path of raw_data are independent
+  // reads (findAuditResource does a targeted `raw_data -> 'inventory'`, not
+  // the full 12-resource-type blob) — fetching them in parallel means total
+  // wait is the slowest of the three, not the sum.
+  const [raw, usage, inventory] = await Promise.all([
     findAuditCostRaw(auditId),
     findAuditUsageRaw(auditId),
+    findAuditResource(auditId, 'inventory') as Promise<InventoryDataRaw | null>,
   ])
   if (!raw) return { error: 'audit not found', status: 404 }
 
@@ -92,6 +159,27 @@ export async function getCostSummaryController(auditId: string) {
 
   const usageTypes = listUsageTypes(usage?.metrics || [])
 
+  // Same deterministic detectors buildPrecomputedSignals feeds to the LLM
+  // (utils/claude.ts) — computed here too so the page can show them as
+  // dedicated UI regardless of whether/when "Analyze" ran. Kept uncapped here
+  // (matching the LLM path) so the resource list below can flag EVERY
+  // affected resource, not just the top N shown in the signals cards; only
+  // the `signals` field sent to the client is sliced.
+  const zombieSpend = detectZombieSpend(actualRows, inventory)
+  const spendSpikes = detectSpendSpikes(actualRows)
+  const idleResources = detectIdleResources(usage?.metrics || [])
+
+  const signals = {
+    zombie_spend: zombieSpend.slice(0, SIGNAL_MAX_ZOMBIE_SPEND),
+    spend_spikes: spendSpikes.slice(0, SIGNAL_MAX_SPEND_SPIKES),
+    cost_forecast: forecastCost(actualRows),
+    idle_resources: idleResources.slice(0, SIGNAL_MAX_IDLE_RESOURCES),
+    cost_by_resource_group: rollupCostByResourceGroup(actualRows, inventory).slice(0, SIGNAL_MAX_ROLLUP_ROWS),
+    cost_by_tag: rollupCostByTag(actualRows, inventory).slice(0, SIGNAL_MAX_ROLLUP_ROWS),
+  }
+
+  const resources = buildResourceList(actualRows, usage?.metrics || [], { zombieSpend, spendSpikes, idleResources })
+
   const summary: CostSummary = {
     currency,
     period_from: raw.cost?.period_from || '',
@@ -99,9 +187,143 @@ export async function getCostSummaryController(auditId: string) {
     total_cost_rows: raw.cost?.total_rows || 0,
     daily_cost: dailyCost,
     top_services: topServices,
+    signals,
+    resources: resources.slice(0, SIGNAL_MAX_RESOURCES),
+    resources_truncated: resources.length > SIGNAL_MAX_RESOURCES,
     total_resources_sampled: usage?.total_resources_sampled || 0,
     usage_types: usageTypes,
     claude_analysis: raw.claude_analysis,
+  }
+
+  return { data: summary, status: 200 }
+}
+
+// getResourceDetailController is getCostSummaryController's counterpart for
+// ONE resource — same three column reads, same detector functions (run over
+// the full audit so the zombie/spike/idle verdicts match what the
+// all-resources view would show, then filtered down to this resource_id),
+// plus the AI findings that mention it by name.
+export async function getResourceDetailController(auditId: string, resourceId: string) {
+  const [raw, usage, inventory] = await Promise.all([
+    findAuditCostRaw(auditId),
+    findAuditUsageRaw(auditId),
+    findAuditResource(auditId, 'inventory') as Promise<InventoryDataRaw | null>,
+  ])
+  if (!raw) return { error: 'audit not found', status: 404 }
+
+  const actualRows = raw.cost?.actual_cost_rows || []
+  const currency = actualRows[0]?.Currency || 'USD'
+  const allMetrics = usage?.metrics || []
+
+  const resourceRows = actualRows.filter(r => r.ResourceId === resourceId)
+  const byDate = new Map<number, number>()
+  for (const row of resourceRows) byDate.set(row.UsageDate, (byDate.get(row.UsageDate) || 0) + row.Cost)
+  const dailyCost = Array.from(byDate.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([date, cost]) => ({ date: formatUsageDate(date), cost: Math.round(cost * 100) / 100 }))
+  const totalCost = resourceRows.reduce((s, r) => s + r.Cost, 0)
+
+  const usageMetrics = allMetrics
+    .filter(m => m.resource_id === resourceId)
+    .map(m => summarizeMetric(m))
+    .map(({ metric_name, unit, avg, total }) => ({ metric_name, unit, avg, total }))
+
+  const lookup = buildResourceInfoLookup(inventory)
+  const resourceGroup = lookup?.get(resourceNameFromId(resourceId).toLowerCase())?.resourceGroup || null
+
+  const detail: ResourceDetail = {
+    resource_id: resourceId,
+    resource_name: resourceNameFromId(resourceId),
+    resource_type: resourceTypeSlug(resourceId),
+    resource_group: resourceGroup,
+    currency,
+    daily_cost: dailyCost,
+    total_cost_usd: Math.round(totalCost * 100) / 100,
+    avg_daily_cost_usd: dailyCost.length > 0 ? Math.round((totalCost / dailyCost.length) * 100) / 100 : 0,
+    usage_metrics: usageMetrics,
+    zombie: detectZombieSpend(actualRows, inventory).find(f => f.resource_id === resourceId) || null,
+    spend_spikes: detectSpendSpikes(actualRows).filter(f => f.resource_id === resourceId),
+    idle: detectIdleResources(allMetrics).filter(f => f.resource_id === resourceId),
+    findings: await findFindingsByAuditAndResource(auditId, resourceNameFromId(resourceId)),
+  }
+
+  return { data: detail, status: 200 }
+}
+
+// getResourceTypeSummaryController is getResourceDetailController's
+// counterpart for a whole resource TYPE — same three column reads and same
+// detector functions, filtered by resourceTypeSlug instead of one
+// resource_id, plus the individual resources of that type (for the
+// resource-type page's "Individual" tab selector).
+export async function getResourceTypeSummaryController(auditId: string, type: string) {
+  const [raw, usage, inventory] = await Promise.all([
+    findAuditCostRaw(auditId),
+    findAuditUsageRaw(auditId),
+    findAuditResource(auditId, 'inventory') as Promise<InventoryDataRaw | null>,
+  ])
+  if (!raw) return { error: 'audit not found', status: 404 }
+
+  const actualRows = raw.cost?.actual_cost_rows || []
+  const currency = actualRows[0]?.Currency || 'USD'
+  const allMetrics = usage?.metrics || []
+
+  const typeRows = actualRows.filter(r => r.ResourceId && resourceTypeSlug(r.ResourceId) === type)
+  const typeMetrics = allMetrics.filter(m => resourceTypeSlug(m.resource_id) === type)
+
+  const byDate = new Map<number, number>()
+  for (const row of typeRows) byDate.set(row.UsageDate, (byDate.get(row.UsageDate) || 0) + row.Cost)
+  const dailyCost = Array.from(byDate.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([date, cost]) => ({ date: formatUsageDate(date), cost: Math.round(cost * 100) / 100 }))
+  const totalCost = typeRows.reduce((s, r) => s + r.Cost, 0)
+
+  const resourceIds = new Set<string>()
+  typeRows.forEach(r => r.ResourceId && resourceIds.add(r.ResourceId))
+  typeMetrics.forEach(m => resourceIds.add(m.resource_id))
+
+  const utilizationMetricNames = UTILIZATION_METRICS_BY_SLUG[type]
+  let avgUtilization: number | null = null
+  if (utilizationMetricNames) {
+    const values = typeMetrics
+      .filter(m => utilizationMetricNames.includes(m.metric_name))
+      .map(m => summarizeMetric(m).avg)
+      .filter((v): v is number => v !== null)
+    avgUtilization = values.length > 0 ? Math.round((values.reduce((s, v) => s + v, 0) / values.length) * 100) / 100 : null
+  }
+
+  const zombieIds = new Set(detectZombieSpend(actualRows, inventory).filter(f => resourceTypeSlug(f.resource_id) === type).map(f => f.resource_id))
+  const spikeIds = new Set(detectSpendSpikes(actualRows).filter(f => resourceTypeSlug(f.resource_id) === type).map(f => f.resource_id))
+  const idleIds = new Set(detectIdleResources(allMetrics).filter(f => resourceTypeSlug(f.resource_id) === type).map(f => f.resource_id))
+  const flaggedCount = new Set([...zombieIds, ...spikeIds, ...idleIds]).size
+
+  const resourceCostById = new Map<string, number>()
+  for (const row of typeRows) resourceCostById.set(row.ResourceId, (resourceCostById.get(row.ResourceId) || 0) + row.Cost)
+
+  const resources: ResourceListEntry[] = Array.from(resourceIds).map(id => {
+    const flags: ('zombie' | 'spike' | 'idle')[] = []
+    if (zombieIds.has(id)) flags.push('zombie')
+    if (spikeIds.has(id)) flags.push('spike')
+    if (idleIds.has(id)) flags.push('idle')
+    return {
+      resource_id: id,
+      resource_name: resourceNameFromId(id),
+      resource_type: type,
+      total_cost_usd: Math.round((resourceCostById.get(id) || 0) * 100) / 100,
+      has_usage: typeMetrics.some(m => m.resource_id === id),
+      signals: flags,
+    }
+  }).sort((a, b) => b.total_cost_usd - a.total_cost_usd)
+
+  const summary: ResourceTypeSummary = {
+    resource_type: type,
+    currency,
+    total_cost_usd: Math.round(totalCost * 100) / 100,
+    resource_count: resourceIds.size,
+    flagged_count: flaggedCount,
+    avg_utilization_pct: avgUtilization,
+    daily_cost: dailyCost,
+    findings: await findFindingsByAuditAndResourceType(auditId, type),
+    resources,
   }
 
   return { data: summary, status: 200 }
@@ -168,15 +390,34 @@ export async function createAnalysisRequestController(auditId: string, scope: st
   const latest = await findLatestAnalysisRequest(auditId, scope)
   if (latest && latest.status === 'pending') {
     void triggerAnalyzerRoutine()
-    return { data: { requestId: latest.id, status: latest.status }, status: 200 }
+    return { data: { requestId: latest.id, status: latest.status, cacheHit: latest.cache_hit }, status: 200 }
   }
 
-  const request = await insertAnalysisRequest(auditId, scope)
+  // "all"/cost/usage scopes never have a scope_hashes entry (by design —
+  // see spec 14), so skip the cache check for them rather than spend a
+  // query that can only ever come back false.
+  const cacheHit = scope !== 'all' && !isCostOrUsageScope(scope)
+    ? await checkScopeCacheHit(auditId, scope)
+    : false
+
+  const request = await insertAnalysisRequest(auditId, scope, cacheHit)
+
+  // A cache hit can be resolved right here, synchronously — no need to wait
+  // for the scheduled agent to poll (spec 14). Falls through to the normal
+  // pending/trigger path if carry-forward can't find a usable prior
+  // analysis (defensive; shouldn't happen if cacheHit was computed correctly).
+  if (cacheHit) {
+    if (await carryForwardCachedAnalysis(auditId, scope)) {
+      await markAnalysisRequestDone(request.id)
+      return { data: { requestId: request.id, status: 'done', cacheHit: true }, status: 201 }
+    }
+  }
+
   // Best-effort: wakes the scheduled agent immediately instead of leaving a
   // manually-queued request to sit until its next daily cron tick (see
   // analyzerRoutine.ts) — never blocks the response on this.
   void triggerAnalyzerRoutine()
-  return { data: { requestId: request.id, status: request.status }, status: 201 }
+  return { data: { requestId: request.id, status: request.status, cacheHit: false }, status: 201 }
 }
 
 export async function getAnalysisRequestController(auditId: string, requestId: string) {
@@ -185,13 +426,13 @@ export async function getAnalysisRequestController(auditId: string, requestId: s
 
   if (request.status !== 'done') {
     return {
-      data: { requestId: request.id, status: request.status, error_message: request.error_message },
+      data: { requestId: request.id, status: request.status, error_message: request.error_message, cacheHit: request.cache_hit },
       status: 200,
     }
   }
 
   const analysis = await getAnalysisForScope(auditId, request.scope)
-  return { data: { requestId: request.id, status: request.status, analysis }, status: 200 }
+  return { data: { requestId: request.id, status: request.status, analysis, cacheHit: request.cache_hit }, status: 200 }
 }
 
 export async function listAuditsController() {

@@ -9,11 +9,41 @@
 > a separate opt-in scope; every Analyze request always follows this 5-stage process, no exceptions
 > — see `getScopedAuditData` in `claude.ts`, which appends `DEEP_RESEARCH_DIRECTIVE` to every
 > scope's instruction). There is no one-shot/fast mode left to fall back to.
+>
+> **`scope === "all"` is a special case (spec 13/spec 15 §B2, split finalized §B9):** everything
+> below this note (Preconditions through Stage 5) is what you follow directly for a single resource
+> type, `"cost"`, or `"usage:<type>"` request — proceed as normal, nothing changes for those. For an
+> `"all"` request specifically, do NOT run the 5 stages yourself in one pass. Instead:
+> 1. Call `list_changed_scopes(auditId)` to see which resource-type scopes actually changed since
+>    the last analyzed audit.
+> 2. For each unchanged scope, call `get_cached_scope_analysis(auditId, scope)` — no agent needed for
+>    these; if it returns null, treat that scope as changed instead (fall back to step 3 for it).
+> 3. For each changed scope, spawn one per-type agent following
+>    `spec/agent/parallel-per-type-agent-prompt.md` (fill in `{SCOPE}`/`{RELATED_SCOPES}` per the
+>    related-types map in `spec/handoff/13-parallel-resource-agents.md`), all in parallel.
+> 4. Once every per-type agent (step 3) has returned, run ONE synthesis pass following
+>    `spec/agent/parallel-synthesis-agent-prompt.md`, giving it both the fresh per-type results and
+>    the cached ones from step 2 (mark the cached ones `carried_forward: true`).
+> 5. Only the synthesis pass calls `save_analysis` — for an `"all"` request, you (the top-level
+>    agent) never call `save_analysis` yourself; the synthesis step's call is the one that resolves
+>    the pending request.
+>
+> This is the only difference `"all"` requests have from every other scope — the underlying stages
+> (build the map, correlate, chain, judge in context, verify) are unchanged; they just run split
+> across dedicated per-type agents plus a synthesis pass instead of in one sequential context.
 
 ## Preconditions
 
 - You have MCP tools: `list_pending_requests`, `get_audit_data(auditId, scope)`,
   `get_audit_history(auditId, scope?, limit?)`, `save_analysis`.
+- `list_pending_requests` will not always show every scope a fresh audit collected data for. Before
+  returning its list, the server silently resolves any scope whose config is unchanged since the
+  last audit it actually analyzed — it copies that prior analysis's findings forward itself (spec
+  14 — per-scope analysis cache) and never surfaces that scope to you at all. This is expected and
+  not a gap: a subscription with few changes day-to-day will show fewer pending requests than its
+  resource-type count, and that's the cache working as intended, not missing data. Only reason
+  about scopes `list_pending_requests` actually gives you — do not try to infer or re-derive
+  findings for a scope you were never asked about.
 - Whatever scope this request names (a resource type, "cost", "usage:<type>", or "all"), do not
   limit yourself to the data `get_audit_data` returned for that scope alone — call `get_audit_data`
   again with a DIFFERENT scope as needed to build the context Stage 1 requires (other resource
