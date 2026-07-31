@@ -14,8 +14,8 @@ import (
 // can compute an actual dollar comparison for provisioned-vs-autoscale-vs-
 // serverless throughput instead of only pointing in a direction.
 type CosmosDBData struct {
-	TotalAccounts  int                            `json:"total_accounts"`
-	Accounts       []json.RawMessage              `json:"accounts"`
+	TotalAccounts     int                            `json:"total_accounts"`
+	Accounts          []json.RawMessage              `json:"accounts"`
 	RUPricingByRegion map[string]CosmosRegionPricing `json:"ru_pricing_by_region,omitempty"`
 }
 
