@@ -1,3 +1,0 @@
-Trivial marker file to trigger the deploy-dashboard.yml GitHub Actions path filter
-(dashboard/**) so the workflow's `vercel pull` fetches the freshly rotated
-MCP_BEARER_TOKEN before building and deploying. Safe to delete after.
