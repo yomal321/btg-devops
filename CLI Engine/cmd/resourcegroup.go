@@ -323,9 +323,9 @@ func (r *RGReport) addRGFinding(f RGFinding) {
 
 func printRGReport(report RGReport) {
 	fmt.Println()
-	fmt.Println("â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—")
-	fmt.Println("â•‘           RESOURCE GROUP ANALYSIS REPORT                     â•‘")
-	fmt.Println("â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
+	fmt.Println("║           RESOURCE GROUP ANALYSIS REPORT                     ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 	fmt.Println()
 
 	fmt.Printf("  Total Resource Groups:     %d\n", report.Summary.TotalResourceGroups)
