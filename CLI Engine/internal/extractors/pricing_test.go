@@ -1,6 +1,9 @@
 package extractors
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestPricingFromItems_PicksExactMeters(t *testing.T) {
 	items := []retailPriceItem{
@@ -38,7 +41,7 @@ func TestFetchCosmosRUPricing_DedupsAndSkipsEmptyRegions(t *testing.T) {
 	// No network available/expected in this test — just verifies the
 	// dedup/blank-skip logic short-circuits without ever reaching HTTP for
 	// duplicate or empty region names.
-	out := FetchCosmosRUPricing(nil, []string{"", "  ", ""})
+	out := FetchCosmosRUPricing(context.TODO(), []string{"", "  ", ""})
 	if len(out) != 0 {
 		t.Errorf("expected no regions queried for blank input, got %v", out)
 	}
