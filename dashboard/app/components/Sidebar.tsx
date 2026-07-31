@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, FileSearch, DollarSign, Globe, Users, Bell, LogOut, Menu, X } from 'lucide-react'
+import { LayoutDashboard, FileSearch, DollarSign, Globe, Users, Bell, AlertTriangle, LogOut, Menu, X } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { Badge } from './Badge'
 import { roleConfig } from '../lib/utils'
@@ -12,6 +12,11 @@ const navItems = [
   { label: 'Dashboard',     href: '/',             icon: LayoutDashboard, exact: true  },
   { label: 'Audits',        href: '/audits',        icon: FileSearch,      exact: false },
   { label: 'Cost & Usage',  href: '/cost-usage',    icon: DollarSign,      exact: false },
+]
+// Visible to admin + analyst (same access as running Analyze) — not viewers,
+// since this exposes an internal data-collection detail, not a finding.
+const analystItems = [
+  { label: 'Data Gaps',     href: '/data-gaps',     icon: AlertTriangle,   exact: false },
 ]
 const adminItems = [
   { label: 'Subscriptions', href: '/subscriptions', icon: Globe,           exact: false },
@@ -93,6 +98,11 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         {navItems.map(item => (
           <NavLink key={item.href} {...item} onClick={onClose} />
         ))}
+
+        {(user?.role === 'admin' || user?.role === 'analyst') &&
+          analystItems.map(item => (
+            <NavLink key={item.href} {...item} onClick={onClose} />
+          ))}
 
         {user?.role === 'admin' && (
           <>

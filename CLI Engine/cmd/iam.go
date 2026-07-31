@@ -470,9 +470,10 @@ func printIAMTable(r IAMReport) {
 		}
 		printed[key] = true
 		icon := "ℹ️"
-		if f.Severity == Critical {
+		switch f.Severity {
+		case Critical:
 			icon = "🔴"
-		} else if f.Severity == Warning {
+		case Warning:
 			icon = "🟡"
 		}
 		fmt.Printf("  %s [%s] %s: %s\n", icon, f.Severity, f.Category, f.Recommendation)

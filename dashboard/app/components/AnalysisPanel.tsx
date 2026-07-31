@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, Download, Share2, FileText, FileSpreadsheet, ChevronDown, ChevronRight, Zap } from 'lucide-react'
+import { Sparkles, Lock, AlertCircle, AlertTriangle, Info, TriangleAlert, EyeOff, RotateCcw, RefreshCw, Download, Share2, FileText, FileSpreadsheet, ChevronDown, ChevronRight, Zap } from 'lucide-react'
 import { Badge } from './Badge'
 import { Modal } from './Modal'
 import { api } from '../lib/api'
@@ -12,6 +12,7 @@ import { exportFindingsAsExcel, exportFindingsAsPDF } from '../lib/exportFinding
 import { isAccountBasedType, type DisplayFinding } from '../lib/findingsLayout'
 import { FindingsGroupFlat, IssueCard } from './FindingsGroupFlat'
 import { FindingsGroupAccount } from './FindingsGroupAccount'
+import { EvidenceBlock } from './EvidenceBlock'
 import type { Finding, User } from '../types'
 
 // The LLM output shape (a subset of DisplayFinding, without the DB-only
@@ -34,11 +35,11 @@ export interface AnalysisStore {
 }
 
 const ALL_SCOPE = 'all'
-// Whole-subscription, multi-stage investigation (spec 10 §4/§5.2) — distinct
-// from ALL_SCOPE's single-pass sweep. Kept as its own scope value (not part
-// of buildScopeGroups in lib/scopes.ts) since it's Analyze-only, not shared
-// with the Chat panel that consumes the same scope-group builder.
-const DEEP_SCOPE = 'deep'
+// Every Analyze scope now always runs the full 5-stage deep-research
+// process (spec 10 §4) — there is no separate fast/one-shot mode and no
+// dedicated "deep" scope to pick anymore (superseded the earlier standalone
+// DEEP_SCOPE option). getScopedAuditData still accepts scope 'deep' as a
+// backward-compat alias of 'all' for any analysis saved before this change.
 const POLL_INTERVAL_MS = 7000
 
 function sleep(ms: number) {
@@ -67,7 +68,7 @@ const severityTint = {
 
 // Extracted so the same card renders identically whether grouped by
 // resource group or shown as a flat list.
-function FindingCard({ f, canAnalyze, onToggleStatus }: {
+export function FindingCard({ f, canAnalyze, onToggleStatus }: {
   f: DisplayFinding
   canAnalyze: boolean
   onToggleStatus: (id: string, status: 'open' | 'dismissed') => void
@@ -107,6 +108,7 @@ function FindingCard({ f, canAnalyze, onToggleStatus }: {
         )}
       </div>
       <p style={{ fontSize: '0.82rem', color: 'var(--t1)', lineHeight: 1.55 }}>{f.issue}</p>
+      <EvidenceBlock evidence={f.evidence} />
       {f.recommendation && (
         <div style={{
           marginTop: '0.625rem', padding: '0.55rem 0.75rem', borderRadius: 6,
@@ -149,7 +151,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   const [running, setRunning]   = useState(false)
   const [error, setError]       = useState('')
   const [showAllConfirm, setShowAllConfirm] = useState(false)
-  const [showDeepConfirm, setShowDeepConfirm] = useState(false)
   const [sevFilter, setSevFilter]   = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<string>('all')
 
@@ -170,6 +171,12 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   // under a different scope.
   const [dbFindings, setDbFindings] = useState<{ scope: string; rows: Finding[] } | null>(null)
   const pollCancelRef = useRef<(() => void) | null>(null)
+  // True when the most recently completed Analyze click was served from the
+  // per-scope cache (spec 14 — this scope's config hasn't changed since the
+  // last analyzed audit, so the prior findings were carried forward instead
+  // of a fresh agent pass). Distinct from the "Cached" badge below, which
+  // means something unrelated (an analysis result already exists to view).
+  const [servedFromCache, setServedFromCache] = useState(false)
 
   useEffect(() => {
     if (!currentAnalysis) return
@@ -188,28 +195,44 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
   // instead of calling an LLM directly from this request, and polls until
   // the agent (via the MCP server) writes a result back. cancelledRef lets
   // an in-flight poll loop stop itself if the component unmounts mid-poll.
+  function applyAnalysisResult(slug: string, analysis: Analysis) {
+    setStore(s =>
+      slug === ALL_SCOPE
+        ? { ...s, all: analysis }
+        : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
+    )
+    api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
+  }
+
   async function analyzeScope(slug: string) {
     setRunning(true)
     setError('')
+    setServedFromCache(false)
     let cancelled = false
     const stop = () => { cancelled = true }
     pollCancelRef.current = stop
     try {
-      const { requestId, status } = await api.requestAnalysis(auditId, slug)
+      const { requestId, status, cacheHit } = await api.requestAnalysis(auditId, slug)
       let current = status
+      if (cacheHit) setServedFromCache(true)
+
+      // A cache hit (spec 14) resolves synchronously and can already be
+      // 'done' on this very first response — fetch and render it now
+      // instead of falling into the poll loop below, which only ever
+      // checks status AFTER the request was still 'pending'.
+      if (current === 'done') {
+        const poll = await api.getAnalysisRequest(auditId, requestId)
+        if (poll.analysis) applyAnalysisResult(slug, poll.analysis as unknown as Analysis)
+      }
+
       while (current === 'pending' && !cancelled) {
         await sleep(POLL_INTERVAL_MS)
         if (cancelled) break
         const poll = await api.getAnalysisRequest(auditId, requestId)
         current = poll.status
+        if (poll.cacheHit) setServedFromCache(true)
         if (current === 'done' && poll.analysis) {
-          const analysis = poll.analysis as unknown as Analysis
-          setStore(s =>
-            slug === ALL_SCOPE
-              ? { ...s, all: analysis }
-              : { ...s, by_resource: { ...(s.by_resource || {}), [slug]: analysis } }
-          )
-          api.listFindings(auditId, slug).then(rows => setDbFindings({ scope: slug, rows })).catch(() => {})
+          applyAnalysisResult(slug, poll.analysis as unknown as Analysis)
         } else if (current === 'failed') {
           setError(poll.error_message || 'Analysis failed')
         }
@@ -223,7 +246,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
 
   function handleAnalyzeClick() {
     if (scope === ALL_SCOPE) setShowAllConfirm(true)
-    else if (scope === DEEP_SCOPE) setShowDeepConfirm(true)
     else analyzeScope(scope)
   }
 
@@ -236,7 +258,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
     }
   }
 
-  const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scope === DEEP_SCOPE ? 'Deep Research' : scopeLabel(scope, scopeGroups)
+  const currentScopeLabel = scope === ALL_SCOPE ? 'All Resources' : scopeLabel(scope, scopeGroups)
 
   // Exports exactly what's currently on screen (respecting the active
   // severity/type filters), not the full unfiltered scope — filtering to
@@ -303,6 +325,7 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         fix_effort: r.fix_effort,
         finding_type: r.finding_type,
         issue: r.issue,
+        evidence: r.evidence,
         recommendation: r.recommendation,
         status: r.status,
         first_seen_at: r.first_seen_at,
@@ -402,8 +425,24 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         {currentAnalysis && (
           <Badge color="success" label={`Cached · ${currentScopeLabel} · ${new Date(currentAnalysis.generated_at).toLocaleDateString()}`} />
         )}
+        {servedFromCache && !running && (
+          <span title="This scope's configuration is unchanged since the last analyzed audit — the prior findings were reused instead of running a fresh analysis.">
+            <Badge color="info" label="No changes since last audit" />
+          </span>
+        )}
         {currentAnalysis && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', position: 'relative' }}>
+            {canAnalyze && (
+              <button
+                className="btn-ghost"
+                disabled={running}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.4rem 0.75rem', fontSize: '0.78rem' }}
+                onClick={handleAnalyzeClick}
+                title="Run a fresh analysis for this scope, replacing the cached result"
+              >
+                <RefreshCw size={13} /> Re-run
+              </button>
+            )}
             <div style={{ position: 'relative' }}>
               <button
                 className="btn-ghost"
@@ -467,9 +506,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             {resourceTypes.length > 0 && (
               <option value={ALL_SCOPE}>— All Resources (all {resourceTypes.length} types) —</option>
             )}
-            {resourceTypes.length > 0 && (
-              <option value={DEEP_SCOPE}>— Deep Research (whole subscription, scheduled agent) —</option>
-            )}
           </select>
         </div>
       )}
@@ -488,17 +524,13 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
         <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
           <p style={{ fontSize: '0.85rem', color: 'var(--t2)', marginBottom: '1rem' }}>
             {scope === ALL_SCOPE
-              ? 'Queue the full audit (all resource types) for analysis in one request.'
-              : scope === DEEP_SCOPE
-              ? 'Queue a deep, multi-stage investigation of the whole subscription — maps the environment, correlates cost/usage/config, and chains issues into real attack paths instead of a single-pass sweep.'
+              ? 'Queue a deep, multi-stage investigation of the full audit (all resource types) — maps the environment, correlates cost/usage/config, and chains issues into real attack paths instead of a single-pass sweep.'
               : resourceTypes.includes(scope)
-              ? `Queue only the "${scope}" resources for a focused analysis.`
-              : `Queue the ${scopeLabel(scope, scopeGroups)} for a focused analysis.`}
+              ? `Queue a deep, multi-stage investigation of the "${scope}" resources.`
+              : `Queue a deep, multi-stage investigation of the ${scopeLabel(scope, scopeGroups)}.`}
           </p>
           {error && <p style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '0.75rem' }}>{error}</p>}
-          <button className="btn-primary" onClick={handleAnalyzeClick}>
-            {scope === DEEP_SCOPE ? 'Run Deep Research' : 'Analyze'}
-          </button>
+          <button className="btn-primary" onClick={handleAnalyzeClick}>Analyze</button>
         </div>
       )}
 
@@ -511,12 +543,10 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
             borderRadius: '50%', animation: 'spin 0.8s linear infinite',
           }} />
           <p style={{ fontSize: '0.82rem', color: 'var(--t2)' }}>
-            {scope === ALL_SCOPE ? 'Full audit queued for analysis…' : scope === DEEP_SCOPE ? 'Deep research queued…' : `${scopeLabel(scope, scopeGroups)} queued for analysis…`}
+            {scope === ALL_SCOPE ? 'Full audit queued for analysis…' : `${scopeLabel(scope, scopeGroups)} queued for analysis…`}
           </p>
           <p style={{ fontSize: '0.72rem', color: 'var(--t4)', marginTop: '0.25rem' }}>
-            {scope === DEEP_SCOPE
-              ? 'A scheduled agent works through a multi-stage investigation — this can take longer than a regular analysis.'
-              : 'A scheduled agent picks this up shortly — usually ready within a few minutes.'}
+            A scheduled agent works through a multi-stage investigation — this can take longer than a quick check.
           </p>
         </div>
       )}
@@ -728,36 +758,6 @@ export function AnalysisPanel({ auditId, resourceCounts, initialStore, hasCost =
                 onClick={() => { setShowAllConfirm(false); analyzeScope(ALL_SCOPE) }}
               >
                 Yes, Analyze All
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* "Deep Research" confirmation dialog */}
-      {showDeepConfirm && (
-        <Modal title="Run Deep Research?" onClose={() => setShowDeepConfirm(false)}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{
-              display: 'flex', gap: '0.625rem', padding: '0.75rem 0.875rem',
-              background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 8,
-            }}>
-              <TriangleAlert size={17} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
-              <p style={{ fontSize: '0.82rem', color: 'var(--t2)', lineHeight: 1.55 }}>
-                This queues a multi-stage investigation across the whole subscription — mapping
-                environments, correlating cost/usage/config, and chaining issues into real attack
-                paths — instead of a single-pass sweep. It takes meaningfully longer than a regular
-                Analyze and is meant to be run occasionally (e.g. daily/weekly), not on every click.
-              </p>
-            </div>
-            {error && <p style={{ color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>}
-            <div style={{ display: 'flex', gap: '0.625rem', justifyContent: 'flex-end' }}>
-              <button className="btn-ghost" onClick={() => setShowDeepConfirm(false)}>Cancel</button>
-              <button
-                className="btn-primary"
-                onClick={() => { setShowDeepConfirm(false); analyzeScope(DEEP_SCOPE) }}
-              >
-                Yes, Run Deep Research
               </button>
             </div>
           </div>

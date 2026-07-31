@@ -32,13 +32,16 @@ func CreateAudit(ctx context.Context, pool *pgxpool.Pool, p CreateAuditParams) (
 }
 
 // CompleteAudit updates an audit row to status="completed" and saves the
-// collected raw_data and resource_counts JSON blobs.
-func CompleteAudit(ctx context.Context, pool *pgxpool.Pool, auditID string, rawData json.RawMessage, resourceCounts json.RawMessage) error {
+// collected raw_data, resource_counts, and scope_hashes JSON blobs.
+// scopeHashes is one SHA-256 per resource-type scope that collected data
+// (extractors.ScopeHash), used by the analyzer to detect which scopes are
+// unchanged since the previous audit (spec 14).
+func CompleteAudit(ctx context.Context, pool *pgxpool.Pool, auditID string, rawData json.RawMessage, resourceCounts json.RawMessage, scopeHashes json.RawMessage) error {
 	tag, err := pool.Exec(ctx, `
 		UPDATE audits
-		SET status = 'completed', raw_data = $2, resource_counts = $3, current_step = NULL
+		SET status = 'completed', raw_data = $2, resource_counts = $3, scope_hashes = $4, current_step = NULL
 		WHERE id = $1
-	`, auditID, []byte(rawData), []byte(resourceCounts))
+	`, auditID, []byte(rawData), []byte(resourceCounts), []byte(scopeHashes))
 	if err != nil {
 		return fmt.Errorf("completing audit: %w", err)
 	}

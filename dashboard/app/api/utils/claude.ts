@@ -1,9 +1,12 @@
-import { findAuditById, updateClaudeAnalysis, findAnalysisById, findAuditCostUsageRaw, findAuditUsageRaw, findAuditCostRaw } from '../models/audit'
+import { findAuditById, updateClaudeAnalysis, findAnalysisById, findAuditCostUsageRaw, findAuditUsageRaw, findAuditCostRaw, findPreviousAuditCostUsageRaw } from '../models/audit'
 import { insertFinding, findFindingsByAudit, deleteFindingsByScope, findPriorLiveFindings, deleteFindingsByIds, resolveFindingsByIds } from '../models/findings'
 import { ChatMessage, Finding } from '../types'
 import { callLLMWithFallback, LLMProvider, LLMMessage } from './llm'
-import { buildUsageGroups } from './usage'
+import { buildUsageGroups, resourceTypeSlug } from './usage'
 import { checklistForType } from './analysisChecklists'
+import { detectZombieSpend, detectSpendSpikes, detectServiceConcentration, detectCostUsageWaste, compareCostPeriods, forecastCost, rollupCostByResourceGroup, rollupCostByTag, detectReservedInstanceCandidates, InventoryDataRaw } from './costInsights'
+import { detectIdleResources, compareUsagePeriods } from './usageInsights'
+import { CostRow, UsageMetricRaw } from '../types'
 
 const DEFAULT_PROVIDER: LLMProvider = 'claude'
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
@@ -20,7 +23,14 @@ export const SEVERITY_RUBRIC = `Severity rubric — apply strictly, do not defau
 - Info: a deviation from best practice with no current impact.
 Tie-break rule: if you are unsure between two severities, pick the lower one. A finding is not Critical just because it is security-related.
 
-Evidence requirement: every finding's "issue" text must cite the exact field/value from the data that proves it (e.g. "publicNetworkAccess is Enabled and ipRules is empty"). If you cannot point to a specific field/value proving the issue, do not report it — do not guess or report something generic.`
+Evidence requirement: "issue" is the plain-English problem statement; "evidence" must separately cite the exact field/value from the data that proves it (e.g. "publicNetworkAccess = \"Enabled\", ipRules = [] (empty)"). If you cannot point to a specific field/value proving the issue, do not report it — do not guess or report something generic.`
+
+// Every Analyze request — a single resource type, "all", "cost", or
+// "usage:<type>" — follows the same 5-stage deep-research process; there is
+// no separate fast/one-shot mode (decision superseding the earlier
+// deep-only 'deep' scope). Appended to every branch's instruction in
+// getScopedAuditData alongside SEVERITY_RUBRIC.
+export const DEEP_RESEARCH_DIRECTIVE = `Follow the 5-stage deep-research playbook at spec/agent/deep-research-playbook.md exactly — do not answer in one pass, even for a narrow scope: (1) build a map of environments/regions/application groupings/spend before judging anything — call get_audit_data again with a different scope (another resource type, "cost", "usage:<type>", or "all") as needed to gather context beyond what this request's own data covers; (2) correlate configuration × cost × usage per resource for hidden-waste findings; (3) chain individually low-severity facts into real attack paths (e.g. a public/no-auth resource's managed identity reaching a Key Vault reaching production credentials) and report each chain as ONE finding with finding_type set to "chain"; (4) judge every candidate's severity against the environment map and get_audit_history's trend data, never from category alone; (5) actively try to refute every Critical before committing to it, then save a SHORT list of well-evidenced findings — record anything you needed but couldn't find as short strings in a data_gaps array. If you cannot read the playbook file, apply this same process from this instruction alone.`
 
 export interface AnalysisFinding {
   severity: 'Critical' | 'Warning' | 'Info'
@@ -49,6 +59,11 @@ export interface AnalysisFinding {
   cost_impact_usd?: number
   cost_impact_note?: string
   issue: string
+  // Raw field/value proof backing `issue`, shown as its own "why this is
+  // flagged" section in the UI instead of folded into the problem sentence.
+  // Optional because findings saved before this field existed won't have it —
+  // the UI falls back to just not rendering the evidence section for those.
+  evidence?: string
   // Legacy flat fix text — derived from recommendation_steps (joined), kept
   // so existing consumers (exports, the summary email, chat context) that
   // read a plain string keep working unchanged.
@@ -149,7 +164,8 @@ Respond with ONLY a JSON object in this exact shape, no other text:
       "affected_resources": ["When the exact same issue affects multiple resources — including multiple ACCOUNTS for account-based resource types (cosmosdb, storage, appserviceplan) — list every affected resource/account name here and write ONE finding for the whole pattern instead of one finding per resource/account. Omit this field entirely for issues unique to a single resource/account."],
       "cost_impact_usd": "estimated monthly dollar impact as a number, if this issue has one — omit if not applicable",
       "cost_impact_note": "a short label instead of cost_impact_usd when the issue has no dollar figure, e.g. \\"security risk\\" — always include ONE of cost_impact_usd or cost_impact_note, never omit both",
-      "issue": "what the problem is, concretely — MUST cite the exact field/value from the data that proves it (per the evidence requirement above), e.g. \\"publicNetworkAccess is Enabled and ipRules is empty, so the account accepts traffic from any IP\\"",
+      "issue": "the problem, in plain English, for a non-technical reader — no raw field names/values here, e.g. \\"This storage account is publicly exposed to the entire internet with no network restriction.\\"",
+      "evidence": "MUST cite the exact field/value from the data that proves the issue (per the evidence requirement above), e.g. \\"publicNetworkAccess = \\\\\\"Enabled\\\\\\", ipRules = [] (empty)\\"",
       "recommendation_steps": ["short numbered fix step, imperative, one concrete action per step — max 4 steps, never a paragraph"],
       "fix_effort": "quick" | "moderate" | "complex" — quick means a single CLI command or portal toggle with no downtime; moderate needs some planning/testing; complex needs a migration, downtime, or code change. This is about the cost to FIX, not how bad the issue is — a Critical finding can still be "quick"
     }
@@ -248,6 +264,7 @@ async function saveFindings(auditId: string, findings: AnalysisFinding[], scope:
       fix_effort: f.fix_effort || undefined,
       finding_type: f.finding_type || undefined,
       issue: f.issue || '',
+      evidence: f.evidence || undefined,
       recommendation: f.recommendation || '',
     }, scope, {
       status: match?.status === 'dismissed' ? 'dismissed' : 'open',
@@ -270,6 +287,77 @@ export interface ScopedAuditData {
   instruction: string
 }
 
+// A short line appended to any instruction whose data includes
+// precomputed_signals — tells the agent these were computed deterministically
+// (spike baselines, zombie-spend diffs, etc.) so it verifies/explains context
+// instead of re-deriving the underlying arithmetic itself.
+const PRECOMPUTED_SIGNALS_NOTE = 'The data includes a `precomputed_signals` object — these are deterministically computed (not model-generated) facts: cost/usage anomalies, concentration ratios, idle resources, and similar. Treat their numbers as ground truth; your job is to judge severity/context and write the finding, not recompute the math. Exception: `reserved_instance_candidates` is only a STABILITY signal (low variance + high mean daily cost) — before recommending a Reserved Instance/Savings Plan commitment, use other data (e.g. whether the resource looks permanent vs. slated for decommissioning per other findings) to judge whether committing is actually wise.'
+
+// Builds every cost/usage precomputed signal relevant to a scope, omitting
+// empty arrays so a quiet subscription doesn't bloat the payload with empty
+// lists. costRows/usageMetrics/inventory are each optional because not every
+// scope has all three on hand (e.g. "usage:<type>" never loads cost rows).
+function buildPrecomputedSignals(opts: {
+  costRows?: CostRow[]
+  usageMetrics?: UsageMetricRaw[]
+  inventory?: InventoryDataRaw | null
+  // Previous audit's rows/metrics for the SAME subscription (see
+  // findPreviousAuditCostUsageRaw), for audit-over-audit "$X this audit vs
+  // $Y last audit" comparisons. Undefined when there's no prior audit yet.
+  previousCostRows?: CostRow[]
+  previousCostPeriod?: { from: string; to: string }
+  previousUsageMetrics?: UsageMetricRaw[]
+}): Record<string, unknown> | undefined {
+  const signals: Record<string, unknown> = {}
+
+  if (opts.costRows && opts.costRows.length > 0) {
+    const zombieSpend = detectZombieSpend(opts.costRows, opts.inventory)
+    const spendSpikes = detectSpendSpikes(opts.costRows)
+    const serviceConcentration = detectServiceConcentration(opts.costRows)
+    if (zombieSpend.length > 0) signals.zombie_spend = zombieSpend
+    if (spendSpikes.length > 0) signals.spend_spikes = spendSpikes
+    if (serviceConcentration.length > 0) signals.service_concentration = serviceConcentration
+
+    if (opts.previousCostRows && opts.previousCostPeriod) {
+      const comparison = compareCostPeriods(opts.costRows, {
+        rows: opts.previousCostRows,
+        periodFrom: opts.previousCostPeriod.from,
+        periodTo: opts.previousCostPeriod.to,
+      })
+      if (comparison) signals.cost_period_comparison = comparison
+    }
+
+    const forecast = forecastCost(opts.costRows)
+    if (forecast) signals.cost_forecast = forecast
+
+    const byResourceGroup = rollupCostByResourceGroup(opts.costRows, opts.inventory)
+    if (byResourceGroup.length > 0) signals.cost_by_resource_group = byResourceGroup
+
+    const byTag = rollupCostByTag(opts.costRows, opts.inventory)
+    if (byTag.length > 0) signals.cost_by_tag = byTag
+
+    const riCandidates = detectReservedInstanceCandidates(opts.costRows)
+    if (riCandidates.length > 0) signals.reserved_instance_candidates = riCandidates
+  }
+
+  if (opts.usageMetrics && opts.usageMetrics.length > 0) {
+    const idleResources = detectIdleResources(opts.usageMetrics)
+    if (idleResources.length > 0) signals.idle_resources = idleResources
+
+    if (opts.previousUsageMetrics) {
+      const usageComparison = compareUsagePeriods(opts.usageMetrics, opts.previousUsageMetrics)
+      if (usageComparison.length > 0) signals.usage_period_comparison = usageComparison
+    }
+  }
+
+  if (opts.costRows && opts.costRows.length > 0 && opts.usageMetrics && opts.usageMetrics.length > 0) {
+    const costUsageWaste = detectCostUsageWaste(opts.costRows, opts.usageMetrics)
+    if (costUsageWaste.length > 0) signals.cost_usage_waste = costUsageWaste
+  }
+
+  return Object.keys(signals).length > 0 ? signals : undefined
+}
+
 // Resolves what to send an LLM (or the MCP-server-driven Claude Code agent —
 // see spec 8) for a given scope, and the instruction to send alongside it.
 // Pulled out of runAnalysis so the same scoping rules serve both the
@@ -280,28 +368,36 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
   const audit = await findAuditById(auditId)
   if (!audit) return { error: 'audit not found', status: 404 }
 
+  // Every scope always gets DEEP_RESEARCH_DIRECTIVE + SEVERITY_RUBRIC —
+  // there is no separate fast/one-shot mode (decision superseding the
+  // earlier standalone 'deep' scope; 'deep' is kept as an accepted alias of
+  // 'all' below purely so any already-saved analyses/requests from before
+  // this change still resolve, not because it's offered anywhere anymore).
   if (scope === 'all' || scope === 'deep') {
     if (!audit.raw_data || Object.keys(audit.raw_data).length === 0) {
       return { error: 'audit has no resource data to analyze', status: 400 }
     }
-    // "Analyze All" and "deep" both send the complete picture — cost/usage
-    // are merged back in here even though they're stored in their own DB
-    // columns, so the full-subscription analysis doesn't lose visibility
-    // into spend and utilization data. They differ only in `instruction`:
-    // "all" is a single-pass generic sweep, "deep" points the agent at the
-    // multi-stage playbook (spec 10 §4/§5.1) — map, correlate, chain,
-    // judge-in-context, verify — instead of a one-shot answer. Both reuse
-    // this one merge so they can't drift on what "the complete picture"
-    // means.
+    // Cost/usage are merged back in here even though they're stored in
+    // their own DB columns, so the full-subscription analysis doesn't lose
+    // visibility into spend and utilization data.
     const costUsage = await findAuditCostUsageRaw(auditId)
+    const previous = await findPreviousAuditCostUsageRaw(auditId)
+    const precomputedSignals = buildPrecomputedSignals({
+      costRows: costUsage?.cost?.actual_cost_rows,
+      usageMetrics: costUsage?.usage?.metrics,
+      inventory: (audit.raw_data as Record<string, unknown>)?.inventory as InventoryDataRaw | undefined,
+      previousCostRows: previous?.cost?.actual_cost_rows,
+      previousCostPeriod: previous?.cost ? { from: previous.cost.period_from, to: previous.cost.period_to } : undefined,
+      previousUsageMetrics: previous?.usage?.metrics,
+    })
     const fullData = {
       ...audit.raw_data,
       ...(costUsage?.cost ? { cost: costUsage.cost } : {}),
       ...(costUsage?.usage ? { usage: costUsage.usage } : {}),
+      ...(precomputedSignals ? { precomputed_signals: precomputedSignals } : {}),
     }
-    const instruction = scope === 'deep'
-      ? `This is a DEEP RESEARCH request — do not answer in one pass. Follow the 5-stage deep-research playbook at spec/agent/deep-research-playbook.md exactly: (1) build a map of environments/regions/application groupings/spend before judging anything, (2) correlate configuration × cost × usage per resource for hidden-waste findings, (3) chain individually low-severity facts into attack paths (e.g. a public/no-auth resource's managed identity reaching a Key Vault reaching production credentials) and report each chain as ONE finding, (4) judge every candidate's severity against the environment map and prior audit history, not category alone, (5) actively try to refute every Critical before committing to it, then save a SHORT list of well-evidenced headline findings followed by routine findings — record anything you needed but couldn't find as a "Data gaps" paragraph in the summary. If you cannot read that file, apply this same process from this instruction alone.\n\n${SEVERITY_RUBRIC}`
-      : `Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).\n\n${SEVERITY_RUBRIC}`
+    let instruction = `Analyze this Azure subscription. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues. Look across all resource types together — cross-resource patterns matter (e.g. a database in one region used by an app in another).\n\n${DEEP_RESEARCH_DIRECTIVE}\n\n${SEVERITY_RUBRIC}`
+    if (precomputedSignals) instruction += `\n\n${PRECOMPUTED_SIGNALS_NOTE}`
     return { data: fullData, instruction }
   }
 
@@ -312,32 +408,52 @@ export async function getScopedAuditData(auditId: string, scope: string): Promis
   // Resource Utilization dropdown and the scope selectors in the UI.
   let resourceData: unknown
   let instruction: string
+  let precomputedSignals: Record<string, unknown> | undefined
   if (scope === 'cost') {
-    resourceData = (await findAuditCostRaw(auditId))?.cost
+    const cost = (await findAuditCostRaw(auditId))?.cost
+    resourceData = cost
     instruction = 'Analyze the Cost Management data for this Azure subscription as a senior DevOps engineer would. Find cost waste, unexpected spend spikes, and opportunities to reduce spend.'
+    const previous = await findPreviousAuditCostUsageRaw(auditId)
+    precomputedSignals = buildPrecomputedSignals({
+      costRows: cost?.actual_cost_rows,
+      inventory: (audit.raw_data as Record<string, unknown>)?.inventory as InventoryDataRaw | undefined,
+      previousCostRows: previous?.cost?.actual_cost_rows,
+      previousCostPeriod: previous?.cost ? { from: previous.cost.period_from, to: previous.cost.period_to } : undefined,
+    })
   } else if (scope.startsWith('usage:')) {
     const usageType = scope.slice('usage:'.length)
     const usageRaw = await findAuditUsageRaw(auditId)
-    const groups = buildUsageGroups(usageRaw?.metrics || [], usageType)
+    const allMetrics = usageRaw?.metrics || []
+    const groups = buildUsageGroups(allMetrics, usageType)
     resourceData = groups.length > 0 ? { type: usageType, groups } : undefined
     instruction = `Analyze the utilization metrics for "${usageType}" resources in this Azure subscription as a senior DevOps engineer would. Find idle, over-provisioned, or under-utilized resources.`
+    const previous = await findPreviousAuditCostUsageRaw(auditId)
+    const scopedMetrics = allMetrics.filter(m => resourceTypeSlug(m.resource_id) === usageType)
+    const previousScopedMetrics = (previous?.usage?.metrics || []).filter(m => resourceTypeSlug(m.resource_id) === usageType)
+    precomputedSignals = buildPrecomputedSignals({
+      usageMetrics: scopedMetrics,
+      previousUsageMetrics: previousScopedMetrics.length > 0 ? previousScopedMetrics : undefined,
+    })
   } else if (scope === 'usage') {
-    resourceData = (await findAuditCostUsageRaw(auditId))?.usage // legacy combined scope, kept for old cache entries only
+    const usage = (await findAuditCostUsageRaw(auditId))?.usage // legacy combined scope, kept for old cache entries only
+    resourceData = usage
     instruction = 'Analyze the Azure Monitor usage data for this subscription as a senior DevOps engineer would. Find idle, over-provisioned, or under-utilized resources.'
+    precomputedSignals = buildPrecomputedSignals({ usageMetrics: usage?.metrics })
   } else {
     resourceData = (audit.raw_data as Record<string, unknown> | undefined)?.[scope]
     instruction = `Analyze the "${scope}" resources in this Azure subscription as a senior DevOps engineer would. Find all problems, inefficiencies, misconfigurations, security gaps, and cost issues specific to this resource type.`
     // Best-practice checklist (spec 10, Phase 2) — only applies to a single
-    // resource-type scope, since it's keyed by that type. "all"/"cost"/
-    // "usage:*" scopes above don't get one; deep research (spec 10 §4) will
-    // eventually sweep every type's checklist itself.
+    // resource-type scope, since it's keyed by that type; folded into
+    // Stage 1/2 of the deep-research playbook below.
     const checklist = checklistForType(scope)
     if (checklist) instruction += `\n\n${checklist}`
   }
   if (resourceData === undefined || resourceData === null) {
     return { error: `no data for resource type "${scope}" in this audit`, status: 400 }
   }
-  return { data: { [scope]: resourceData }, instruction: `${instruction}\n\n${SEVERITY_RUBRIC}` }
+  if (precomputedSignals) instruction += `\n\n${PRECOMPUTED_SIGNALS_NOTE}`
+  const data = { [scope]: resourceData, ...(precomputedSignals ? { precomputed_signals: precomputedSignals } : {}) }
+  return { data, instruction: `${instruction}\n\n${DEEP_RESEARCH_DIRECTIVE}\n\n${SEVERITY_RUBRIC}` }
 }
 
 // Persists a finished analysis for a scope — merges it into the cached

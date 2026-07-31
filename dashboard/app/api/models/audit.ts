@@ -87,6 +87,67 @@ export async function findAuditCostUsageRaw(auditId: string): Promise<AuditCostU
   return rows[0] || null
 }
 
+export interface PreviousAuditCostUsage {
+  cost: CostDataRaw | null
+  usage: UsageDataRaw | null
+  created_at: string
+}
+
+// Finds the most recent PRIOR audit of the SAME subscription (by
+// created_at, same join shape as findSubscriptionFindingHistory in
+// models/findings.ts) and returns its cost/usage columns — used for
+// audit-over-audit cost/usage comparison ("$X this audit vs $Y last audit").
+// Returns null if this is the subscription's first audit.
+export async function findPreviousAuditCostUsageRaw(auditId: string): Promise<PreviousAuditCostUsage | null> {
+  const { rows } = await pool.query(
+    `SELECT prev.cost_data AS cost, prev.usage_data AS usage, prev.created_at
+     FROM audits cur
+     JOIN audits prev ON prev.subscription_id = cur.subscription_id AND prev.created_at < cur.created_at
+     WHERE cur.id = $1
+     ORDER BY prev.created_at DESC
+     LIMIT 1`,
+    [auditId]
+  )
+  return rows[0] || null
+}
+
+// The most recent PRIOR audit of the same subscription that has a
+// status='done' analysis_requests row for this exact scope — i.e. the last
+// audit whose analysis of this scope actually completed. Same "analyzed"
+// definition as checkScopeCacheHit (models/analysisRequests.ts) and the Go
+// CLI's PreviousAnalyzedScopeHash, so all three agree on what counts as a
+// comparable prior audit (spec 14). Used to fetch that audit's already-saved
+// analysis to carry forward instead of re-running it.
+export async function findPreviousAnalyzedAuditId(auditId: string, scope: string): Promise<string | null> {
+  const { rows } = await pool.query(
+    `SELECT prev.id
+     FROM audits cur
+     JOIN audits prev ON prev.subscription_id = cur.subscription_id AND prev.created_at < cur.created_at
+     WHERE cur.id = $1
+       AND EXISTS (
+         SELECT 1 FROM analysis_requests ar
+         WHERE ar.audit_id = prev.id AND ar.scope = $2 AND ar.status = 'done'
+       )
+     ORDER BY prev.created_at DESC
+     LIMIT 1`,
+    [auditId, scope]
+  )
+  return rows[0]?.id || null
+}
+
+// Every resource-type scope this audit actually collected data for, mapped
+// to its config hash (spec 14). Used by the "all"-scope parallel fan-out
+// (spec 13 §Orchestration) to enumerate which scopes to cache-check —
+// scopes with no entry here never collected data this audit and are
+// skipped entirely, same as collect.go's own resourceCounts > 0 gate.
+export async function findAuditScopeHashes(auditId: string): Promise<Record<string, string>> {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(scope_hashes, '{}'::jsonb) AS scope_hashes FROM audits WHERE id = $1`,
+    [auditId]
+  )
+  return rows[0]?.scope_hashes || {}
+}
+
 export async function findAuditResource(auditId: string, slug: string): Promise<unknown | null> {
   const { rows } = await pool.query(
     `SELECT raw_data -> $2 AS data FROM audits

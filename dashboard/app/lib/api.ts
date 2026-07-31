@@ -42,13 +42,22 @@ export const api = {
   listAudits: () =>
     apiFetch<import('../types').Audit[]>('/api/audits'),
 
+  listDataGaps: () =>
+    apiFetch<{ open: import('../types').DataGapEntry[]; resolved: import('../types').ResolvedGapEntry[] }>('/api/data-gaps'),
+
+  markDataGapFixed: (subscription_id: string, scope: string, note?: string) =>
+    apiFetch<{ marked: boolean }>('/api/data-gaps', {
+      method: 'POST',
+      body: JSON.stringify({ subscription_id, scope, note }),
+    }),
+
   triggerAudit: () =>
     apiFetch<{ triggered: boolean; triggered_at: string }>('/api/audits/trigger', { method: 'POST' }),
 
   getAnalysisProgress: (auditId: string) =>
     apiFetch<{
-      total: number; done: number; pending: number; failed: number
-      scopes: { scope: string; status: 'pending' | 'done' | 'failed' }[]
+      total: number; done: number; pending: number; failed: number; cached: number
+      scopes: { scope: string; status: 'pending' | 'done' | 'failed'; cache_hit: boolean }[]
     }>(`/api/audits/${auditId}/analysis-progress`),
 
   shareAnalysis: (auditId: string, scope: string, roles: string[], userIds: string[]) =>
@@ -65,6 +74,12 @@ export const api = {
 
   getUsageSummary: (id: string, type: string) =>
     apiFetch<import('../types').UsageSummary>(`/api/audits/${id}/usage-summary?type=${encodeURIComponent(type)}`),
+
+  getResourceDetail: (id: string, resourceId: string) =>
+    apiFetch<import('../types').ResourceDetail>(`/api/audits/${id}/resource-detail?resourceId=${encodeURIComponent(resourceId)}`),
+
+  getResourceTypeSummary: (id: string, type: string) =>
+    apiFetch<import('../types').ResourceTypeSummary>(`/api/audits/${id}/resource-type-summary?type=${encodeURIComponent(type)}`),
 
   getRegionSummary: (id: string) =>
     apiFetch<import('../types').RegionSummary>(`/api/audits/${id}/region-summary`),
@@ -84,7 +99,7 @@ export const api = {
   // Queues an analysis run for the scheduled Claude Code agent to pick up
   // (spec 8) instead of calling an LLM directly from this request.
   requestAnalysis: (auditId: string, scope: string) =>
-    apiFetch<{ requestId: string; status: 'pending' | 'done' | 'failed' }>(
+    apiFetch<{ requestId: string; status: 'pending' | 'done' | 'failed'; cacheHit: boolean }>(
       `/api/audits/${auditId}/analysis-request`,
       { method: 'POST', body: JSON.stringify({ scope }) }
     ),
@@ -95,6 +110,7 @@ export const api = {
       status: 'pending' | 'done' | 'failed'
       error_message?: string | null
       analysis?: Record<string, unknown>
+      cacheHit: boolean
     }>(`/api/audits/${auditId}/analysis-request/${requestId}`),
 
   listFindings: (auditId: string, scope?: string) =>
@@ -108,6 +124,13 @@ export const api = {
 
   topFindings: (limit = 8) =>
     apiFetch<{ findings: import('../types').Finding[]; hasAnyFindings: boolean }>(`/api/findings/top?limit=${limit}`),
+
+  savings: (subscriptionId?: string) =>
+    apiFetch<{
+      months: { month: string; total_saved_usd: number; findings_resolved: number }[]
+      total_saved_usd: number
+      total_findings_resolved: number
+    }>(`/api/findings/savings${subscriptionId ? `?subscriptionId=${encodeURIComponent(subscriptionId)}` : ''}`),
 
   searchFindings: (q: string, limit = 8) =>
     apiFetch<{ findings: import('../types').Finding[] }>(`/api/findings/search?q=${encodeURIComponent(q)}&limit=${limit}`),

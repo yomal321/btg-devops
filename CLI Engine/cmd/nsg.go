@@ -465,11 +465,12 @@ func printNSGTable(r NSGReport) {
 			continue
 		}
 		printed[key] = true
-		icon := "â„¹ï¸"
-		if f.Severity == Critical {
-			icon = "ðŸ”´"
-		} else if f.Severity == Warning {
-			icon = "ðŸŸ¡"
+		icon := "ℹ️"
+		switch f.Severity {
+		case Critical:
+			icon = "🔴"
+		case Warning:
+			icon = "🟡"
 		}
 		fmt.Printf("  %s [%s] %s: %s\n", icon, f.Severity, f.Category, f.Recommendation)
 	}

@@ -54,7 +54,9 @@ func ExtractCost(ctx context.Context, subID string, cred azcore.TokenCredential)
 	})
 
 	end := time.Now().UTC()
-	start := end.AddDate(0, 0, -30)
+	// 90 days, not 30 (spec 11 §7) — the deep-research analyzer needs enough
+	// history to tell a longstanding spend pattern from a recent change.
+	start := end.AddDate(0, 0, -90)
 	scope := fmt.Sprintf("/subscriptions/%s", subID)
 
 	actualRows, err := queryCostRows(ctx, client, pipeline, scope, armcostmanagement.ExportTypeActualCost, start, end)

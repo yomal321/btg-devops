@@ -203,7 +203,7 @@ func runAppServiceTraffic(_ *cobra.Command, _ []string) error {
 		if report.TotalRequests > 0 {
 			errorRate := report.HTTP5xx / report.TotalRequests * 100
 			if errorRate > 10 {
-				report.Recommendation += fmt.Sprintf(" âš ï¸  High 5xx error rate (%.1f%%).", errorRate)
+				report.Recommendation += fmt.Sprintf(" ⚠️  High 5xx error rate (%.1f%%).", errorRate)
 			}
 		}
 
@@ -242,7 +242,7 @@ func ClassifyTrafficStatus(report *AppTrafficReport) {
 	if report.TotalRequests > 0 {
 		errorRate := report.HTTP5xx / report.TotalRequests * 100
 		if errorRate > 10 {
-			report.Recommendation += fmt.Sprintf(" âš ï¸  High 5xx error rate (%.1f%%).", errorRate)
+			report.Recommendation += fmt.Sprintf(" ⚠️  High 5xx error rate (%.1f%%).", errorRate)
 		}
 	}
 }

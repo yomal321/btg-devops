@@ -21,7 +21,7 @@ interface KPICardProps {
   icon?: LucideIcon
   trend?: string
   trendDir?: 'up' | 'down'
-  sub?: string
+  sub?: ReactNode
   accent?: 'cyan' | 'emerald' | 'violet' | 'amber'
   /** Optional recent-history series for the mini chart under the value. */
   sparkline?: number[]

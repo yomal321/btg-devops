@@ -3,7 +3,7 @@ import { Finding } from '../types'
 
 const FINDING_COLS = `id, audit_id, severity, category, resource_type, resource_name, resource_group,
             child_resource_name, affected_resources, cost_impact_usd, cost_impact_note, recommendation_steps,
-            fix_effort, finding_type, issue, recommendation, scope, status, first_seen_at, resolved_at, created_at`
+            fix_effort, finding_type, issue, evidence, recommendation, scope, status, first_seen_at, resolved_at, created_at`
 
 export async function findFindingsByAudit(auditId: string, scope?: string): Promise<Finding[]> {
   const params: unknown[] = [auditId]
@@ -21,12 +21,40 @@ export async function findFindingsByAudit(auditId: string, scope?: string): Prom
   return rows
 }
 
+// findFindingsByAuditAndResource narrows findFindingsByAudit's WHERE clause
+// down to one resource by name — used by the resource-detail page so it
+// shows only the AI findings that mention this resource, not the audit's
+// full findings list.
+export async function findFindingsByAuditAndResource(auditId: string, resourceName: string): Promise<Finding[]> {
+  const { rows } = await pool.query(
+    `SELECT ${FINDING_COLS}
+     FROM findings WHERE audit_id = $1 AND resource_name = $2
+     ORDER BY CASE severity WHEN 'Critical' THEN 1 WHEN 'Warning' THEN 2 ELSE 3 END, created_at ASC`,
+    [auditId, resourceName]
+  )
+  return rows
+}
+
+// findFindingsByAuditAndResourceType narrows findFindingsByAudit down to one
+// resource TYPE (the dashboard slug already stored on each finding, e.g.
+// "cosmosdb") — used by the resource-type summary page to show findings
+// combined across every resource of that type.
+export async function findFindingsByAuditAndResourceType(auditId: string, resourceType: string): Promise<Finding[]> {
+  const { rows } = await pool.query(
+    `SELECT ${FINDING_COLS}
+     FROM findings WHERE audit_id = $1 AND resource_type = $2
+     ORDER BY CASE severity WHEN 'Critical' THEN 1 WHEN 'Warning' THEN 2 ELSE 3 END, created_at ASC`,
+    [auditId, resourceType]
+  )
+  return rows
+}
+
 export async function insertFinding(
   auditId: string,
   finding: {
     severity: string; category?: string; resource_type: string; resource_name: string; resource_group?: string
     child_resource_name?: string; affected_resources?: string[]; cost_impact_usd?: number; cost_impact_note?: string
-    recommendation_steps?: string[]; fix_effort?: string; finding_type?: string; issue: string; recommendation: string
+    recommendation_steps?: string[]; fix_effort?: string; finding_type?: string; issue: string; evidence?: string; recommendation: string
   },
   scope?: string,
   lifecycle?: { status?: string; firstSeenAt?: Date }
@@ -34,15 +62,15 @@ export async function insertFinding(
   const { rows } = await pool.query(
     `INSERT INTO findings (audit_id, severity, category, resource_type, resource_name, resource_group,
                             child_resource_name, affected_resources, cost_impact_usd, cost_impact_note, recommendation_steps,
-                            fix_effort, finding_type, issue, recommendation, scope, status, first_seen_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+                            fix_effort, finding_type, issue, evidence, recommendation, scope, status, first_seen_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
     [
       auditId, finding.severity, finding.category || null, finding.resource_type, finding.resource_name,
       finding.resource_group || null,
       finding.child_resource_name || null, finding.affected_resources || null,
       finding.cost_impact_usd ?? null, finding.cost_impact_note || null, finding.recommendation_steps || null,
       finding.fix_effort || null, finding.finding_type || null,
-      finding.issue, finding.recommendation, scope || null,
+      finding.issue, finding.evidence || null, finding.recommendation, scope || null,
       lifecycle?.status || 'open', lifecycle?.firstSeenAt || new Date(),
     ]
   )
@@ -222,6 +250,45 @@ export async function findSubscriptionFindingHistory(
   return rows
 }
 
+export interface MonthlySavingsRow {
+  month: string // YYYY-MM, month resolved_at falls in
+  total_saved_usd: number
+  findings_resolved: number
+}
+
+// Sums cost_impact_usd for findings that flipped to 'resolved' (saveFindings'
+// auto-resolve — a cost-waste finding that no longer appears in a fresh
+// analysis), grouped by month. Pure SQL aggregation over data the findings
+// lifecycle already maintains — no estimation involved, since a finding is
+// either resolved or it isn't and its cost_impact_usd was already set by the
+// analysis that flagged it. subscriptionId narrows to one subscription;
+// omit it for an org-wide total.
+export async function findMonthlySavings(subscriptionId?: string, months = 12): Promise<MonthlySavingsRow[]> {
+  const params: unknown[] = [months]
+  let where = `f.status = 'resolved' AND f.resolved_at IS NOT NULL AND f.cost_impact_usd IS NOT NULL
+               AND f.resolved_at >= date_trunc('month', now()) - ($1 || ' months')::interval`
+  if (subscriptionId) {
+    params.push(subscriptionId)
+    where += ` AND a.subscription_id = $${params.length}`
+  }
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('month', f.resolved_at), 'YYYY-MM') AS month,
+            SUM(f.cost_impact_usd) AS total_saved_usd,
+            COUNT(*) AS findings_resolved
+     FROM findings f
+     JOIN audits a ON a.id = f.audit_id
+     WHERE ${where}
+     GROUP BY month
+     ORDER BY month DESC`,
+    params
+  )
+  return rows.map(r => ({
+    month: r.month,
+    total_saved_usd: Math.round(Number(r.total_saved_usd) * 100) / 100,
+    findings_resolved: Number(r.findings_resolved),
+  }))
+}
+
 export async function findFindingById(findingId: number): Promise<Finding | null> {
   const { rows } = await pool.query(
     `SELECT ${FINDING_COLS}
@@ -233,7 +300,7 @@ export async function findFindingById(findingId: number): Promise<Finding | null
 
 export async function updateFinding(
   findingId: number,
-  fields: { severity?: string; resource_type?: string; resource_name?: string; issue?: string; recommendation?: string; status?: string }
+  fields: { severity?: string; resource_type?: string; resource_name?: string; issue?: string; evidence?: string; recommendation?: string; status?: string }
 ): Promise<boolean> {
   const sets: string[] = []
   const values: unknown[] = [findingId]
@@ -242,6 +309,7 @@ export async function updateFinding(
   if (fields.resource_type !== undefined) { sets.push(`resource_type = $${i++}`); values.push(fields.resource_type) }
   if (fields.resource_name !== undefined) { sets.push(`resource_name = $${i++}`); values.push(fields.resource_name) }
   if (fields.issue !== undefined) { sets.push(`issue = $${i++}`); values.push(fields.issue) }
+  if (fields.evidence !== undefined) { sets.push(`evidence = $${i++}`); values.push(fields.evidence) }
   if (fields.recommendation !== undefined) { sets.push(`recommendation = $${i++}`); values.push(fields.recommendation) }
   if (fields.status !== undefined) {
     sets.push(`status = $${i++}`)

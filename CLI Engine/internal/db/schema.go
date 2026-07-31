@@ -59,6 +59,15 @@ ALTER TABLE audits ADD COLUMN IF NOT EXISTS usage_data JSONB;
 -- so it never shows stale text on a finished audit.
 ALTER TABLE audits ADD COLUMN IF NOT EXISTS current_step TEXT;
 
+-- scope_hashes holds one SHA-256 hex digest per resource-type scope (storage,
+-- iam, nsg, ...), keyed the same as raw_data's own keys, computed over that
+-- scope's cleaned config JSON only — cost_data/usage_data are excluded since
+-- they change by nature every audit (rolling cost history, metrics) and
+-- would never hit a cache hit. Unchanged hash vs. the previous analyzed audit
+-- for the same subscription means that scope's config genuinely didn't
+-- change, letting the analyzer skip re-analyzing it (spec 14).
+ALTER TABLE audits ADD COLUMN IF NOT EXISTS scope_hashes JSONB;
+
 CREATE TABLE IF NOT EXISTS findings (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   audit_id        UUID NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
@@ -159,6 +168,12 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS fix_effort TEXT;
 -- every non-chain finding after it).
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS finding_type TEXT;
 
+-- evidence — the raw field/value proof backing "issue", split out so the UI
+-- can render "why this is flagged" as its own section instead of folding it
+-- into the plain-English problem sentence. NULL for findings saved before
+-- this column existed; the UI simply omits the evidence section for those.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS evidence TEXT;
+
 -- analysis_requests is the queue behind the MCP-server/Claude-Code-orchestrator
 -- flow (spec 8): the dashboard writes a pending row instead of calling an LLM
 -- API directly, a scheduled Claude Code agent claims it via the MCP server,
@@ -174,6 +189,15 @@ CREATE TABLE IF NOT EXISTS analysis_requests (
   requested_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   completed_at  TIMESTAMPTZ
 );
+
+-- cache_hit marks a request whose scope's config hash (audits.scope_hashes)
+-- matched the most recent PRIOR audit of the same subscription that has a
+-- 'done' request for this same scope (spec 14 — per-scope analysis cache).
+-- Set at insert time by whatever created the row (Go auto-queue on collect,
+-- or the dashboard's manual Analyze button) — never changed afterward. It is
+-- only a marker for the analyzer/UI to act on later (carry-forward findings
+-- instead of spending agent time); this column alone does not skip anything.
+ALTER TABLE analysis_requests ADD COLUMN IF NOT EXISTS cache_hit BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -252,6 +276,24 @@ CREATE TABLE IF NOT EXISTS notification_role_settings (
 INSERT INTO notification_role_settings (role, enabled) VALUES
   ('admin', TRUE), ('analyst', FALSE), ('viewer', FALSE)
 ON CONFLICT (role) DO NOTHING;
+
+-- data_gap_marks lets an admin/analyst manually record "I applied a fix for
+-- this" right after acting on a data_gaps entry (spec: dashboard visibility
+-- for data gaps), instead of only finding out whether it worked once the
+-- next scheduled audit's analysis runs. One row per (subscription, scope) —
+-- re-marking updates it in place rather than creating a history log. The
+-- dashboard computes three states from this: no row = "open"; marked_at at
+-- or after the latest analysis for that scope = "pending verification" (fix
+-- applied, next audit hasn't run yet); marked_at before a LATER analysis
+-- that still reports gaps = "reopened" (the fix didn't actually hold).
+CREATE TABLE IF NOT EXISTS data_gap_marks (
+  subscription_id TEXT NOT NULL,
+  scope           TEXT NOT NULL,
+  marked_by       UUID REFERENCES users(id),
+  marked_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note            TEXT,
+  PRIMARY KEY (subscription_id, scope)
+);
 
 CREATE INDEX IF NOT EXISTS idx_findings_audit_id            ON findings(audit_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_requests_status     ON analysis_requests(status);

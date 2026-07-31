@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Boxes, Database, ShieldAlert, Play } from 'lucide-react'
+import { Boxes, Database, ShieldAlert, Play, AlertTriangle } from 'lucide-react'
 import { Header } from './components/Header'
 import { KPICard } from './components/KPICard'
 import { ResourceChart } from './components/ResourceChart'
@@ -14,6 +14,7 @@ import { ResourceDeltaList } from './components/ResourceDeltaList'
 import { MiniSeverityCard } from './components/MiniSeverityCard'
 import { RecentAuditsCard, type SeverityCounts } from './components/RecentAuditsCard'
 import { RegionListCard } from './components/RegionListCard'
+import { SavingsCard } from './components/SavingsCard'
 import { DashboardSearch } from './components/DashboardSearch'
 import { api } from './lib/api'
 import { useAuth } from './lib/auth'
@@ -58,6 +59,17 @@ export default function DashboardPage() {
   // unanalyzed newest audit has zero findings.
   const latestAnalyzed = completed.find(a => a.has_analysis) || null
   const { summary: regionSummary, error: regionError } = useRegionSummary(latest?.id)
+
+  // Open data-gap count — admin/analyst only, same access as Data Gaps page
+  // itself. Silently stays null (no badge) on fetch failure/forbidden rather
+  // than surfacing an error on the main dashboard for something this minor.
+  const [openGapCount, setOpenGapCount] = useState<number | null>(null)
+  useEffect(() => {
+    if (user?.role !== 'admin' && user?.role !== 'analyst') return
+    let cancelled = false
+    api.listDataGaps().then(v => { if (!cancelled) setOpenGapCount(v.open.length) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [user?.role])
 
   const [severityCounts, setSeverityCounts] = useState<SeverityCounts | null>(null)
   // recent 5 for the audits table, plus latestAnalyzed in case it's older
@@ -129,7 +141,19 @@ export default function DashboardPage() {
               {activeSubs !== null && ` · ${activeSubs} active subscription${activeSubs === 1 ? '' : 's'}`}
             </p>
           </div>
-          <DashboardSearch audits={audits || []} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            {!!openGapCount && (
+              <Link
+                href="/data-gaps"
+                className="bdg bdg-warning"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', textDecoration: 'none' }}
+              >
+                <AlertTriangle size={12} />
+                {openGapCount} open data gap{openGapCount === 1 ? '' : 's'}
+              </Link>
+            )}
+            <DashboardSearch audits={audits || []} />
+          </div>
         </div>
 
         {loading && (
@@ -249,6 +273,12 @@ export default function DashboardPage() {
               <TopIssues limit={5} compact />
               <RecentAuditsCard audits={recent} severityCounts={severityCounts} />
               <RegionListCard summary={regionSummary} error={regionError} />
+            </div>
+
+            {/* Row 3.5 — $ saved tracking, its own row since it's org-wide
+                rather than tied to the latest audit like the cards above */}
+            <div className="cv-auto grid grid-cols-1 gap-4">
+              <SavingsCard />
             </div>
 
             {/* Row 4 — cross-region detail, only when there are actual gaps

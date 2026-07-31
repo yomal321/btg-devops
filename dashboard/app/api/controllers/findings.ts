@@ -1,9 +1,16 @@
-import { findFindingsByAudit, insertFinding, findFindingById, updateFinding, deleteFinding, findTopFindings, hasAnyFindings, findSeverityCountsByAudits, searchOpenFindings } from '../models/findings'
+import { findFindingsByAudit, insertFinding, findFindingById, updateFinding, deleteFinding, findTopFindings, hasAnyFindings, findSeverityCountsByAudits, searchOpenFindings, findMonthlySavings } from '../models/findings'
 import { Finding } from '../types'
 
 export async function topFindingsController(limit = 8) {
   const [findings, anyFindings] = await Promise.all([findTopFindings(limit), hasAnyFindings()])
   return { data: { findings, hasAnyFindings: anyFindings }, status: 200 }
+}
+
+export async function savingsController(subscriptionId?: string) {
+  const months = await findMonthlySavings(subscriptionId)
+  const totalSavedUsd = Math.round(months.reduce((s, m) => s + m.total_saved_usd, 0) * 100) / 100
+  const totalFindingsResolved = months.reduce((s, m) => s + m.findings_resolved, 0)
+  return { data: { months, total_saved_usd: totalSavedUsd, total_findings_resolved: totalFindingsResolved }, status: 200 }
 }
 
 export async function severityCountsController(auditIds: string[]) {
@@ -33,6 +40,7 @@ export async function saveFindingsController(auditId: string, findings: Partial<
       resource_type: f.resource_type || '',
       resource_name: f.resource_name || '',
       issue: f.issue || '',
+      evidence: f.evidence || undefined,
       recommendation: f.recommendation || '',
     }, f.scope || undefined)
   }
@@ -47,7 +55,7 @@ export async function getFindingController(findingId: number) {
 
 export async function updateFindingController(
   findingId: number,
-  body: { severity?: string; resource_type?: string; resource_name?: string; issue?: string; recommendation?: string; status?: string }
+  body: { severity?: string; resource_type?: string; resource_name?: string; issue?: string; evidence?: string; recommendation?: string; status?: string }
 ) {
   const validSeverities = ['Critical', 'Warning', 'Info']
   if (body.severity && !validSeverities.includes(body.severity)) {
