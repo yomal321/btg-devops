@@ -23,6 +23,19 @@
 > half-day's worth, before trusting a full daily batch unattended. Keep `spec/agent/routine-prompt.md`'s
 > previous single-agent version handy for a fast rollback (already proven to work in ~30 seconds via
 > `RemoteTrigger update`) if a real run ever looks stuck.
+>
+> **Root-cause finding, 2026-08-03 — fixed in this version:** a 13-scope real run completed all
+> specialists correctly, but 3 scopes' results never persisted. Investigation (direct read-only DB
+> query, confirmed with user approval) ruled out both a code bug and a scope-name typo — the
+> `by_resource` JSONB for that audit simply had no entry at all for those 3 scopes, under any
+> spelling, and neither did the other 2 audits tested that day. **Conclusion: one synthesis agent
+> making up to 13 sequential `save_analysis` calls is not reliable** — it can silently fail to reach
+> some of them, and its own end-of-run summary is not trustworthy evidence that it did (in this case
+> it reported a specific `{"saved":true,"requestId":null}` response for the 3 missing scopes that no
+> database evidence supports ever having happened — most likely it described what the `save_analysis`
+> handler's code *would* return in that situation, having read `tools.ts`, rather than an actual
+> observed response). **Fix (Part 3a/5 below): synthesis only decides findings, it does not save
+> anything itself. Saving happens as its own separate, parallelized, individually-verified step.**
 
 ---
 
@@ -51,16 +64,32 @@ audit's group (may be 1 scope on a quiet day, or several):
 1. Use the `Workflow` tool to spawn one specialist subagent per scope in this group, all via a
    single `parallel()` call — a genuine concurrency barrier, never a one-at-a-time loop. Use Part 2
    below as each subagent's prompt template, with `{SCOPE}` and `{RELATED_SCOPES}` filled in from
-   the related-types map (Part 4).
+   the related-types map (Part 6).
 2. After the batch returns, spawn ONE synthesis subagent (Part 3 below) fed every specialist's
-   output from step 1.
-3. **Output shape differs from the manual "all" case (Bucket 3)**: synthesis must decide final
-   findings SEPARATELY FOR EACH SCOPE in the group — each scope still has its own
-   `analysis_requests` row to close. A cross-type chain finding gets attributed to ONE scope only
-   (its entry point), never duplicated across every scope it touches. Synthesis then calls
-   `save_analysis` ONCE PER SCOPE in the group (N scopes in → N `save_analysis` calls out).
-4. **Fault isolation:** if a specialist subagent errors or returns nothing usable, don't fail the
-   group — carry that scope forward as a `data_gaps` entry into synthesis instead.
+   output from step 1. **Synthesis decides findings only — it does NOT call `save_analysis` itself
+   (see the root-cause note above).** It must decide final findings SEPARATELY FOR EACH SCOPE in the
+   group — each scope still has its own `analysis_requests` row to close. A cross-type chain finding
+   gets attributed to ONE scope only (its entry point), never duplicated across every scope it
+   touches. Synthesis returns its decision as structured data: one `{scope, summary, findings,
+   data_gaps}` object per scope in the group, as its final answer — nothing else.
+3. **Saving (Part 5) — done by YOU, the top-level agent, not a subagent's self-report.** For each
+   `{scope, summary, findings, data_gaps}` object synthesis returned, spawn one small "save"
+   subagent, ALL via a single `parallel()` call (Part 5 template) — one save call each, nothing else
+   in its job. Collect every save-subagent's raw returned response text yourself.
+4. **Verify every save yourself — do not trust a subagent's narration of what it did.** For each
+   scope's raw response: it must parse as JSON containing a non-null `requestId`. If it doesn't (null
+   `requestId`, an `error` field, a timeout, or anything that doesn't parse), that scope's save
+   FAILED — retry it once with a fresh save subagent for just that scope. If it fails a second time,
+   report it honestly as a `data_gaps`-style note in your final summary ("scope X's analysis could
+   not be confirmed saved after 2 attempts") — never report a scope as saved without having actually
+   seen a response with a real `requestId` for it.
+5. **Final independent check:** after all saves (and retries) are done, call `list_pending_requests`
+   once more and confirm none of this audit's scopes from this group are still `pending`. If any
+   still are, that scope's save genuinely did not go through — say so plainly in your summary; do not
+   describe it as done.
+6. **Fault isolation (specialists, not saves):** if a specialist subagent errors or returns nothing
+   usable, don't fail the group — carry that scope forward as a `data_gaps` entry into synthesis
+   instead.
 
 ### BUCKET 3 — scope is exactly `"all"` (manual "analyze everything" button)
 
@@ -73,9 +102,14 @@ wasn't precomputed at queue time here, so check it fresh instead of grouping:
 3. For every `changed=true` scope, run the same `parallel()` specialist fan-out as Bucket 2 (Part 2
    template, same related-types map).
 4. Spawn one synthesis subagent (Part 3 template) fed all specialist outputs + carried-forward
-   cached results. Unlike Bucket 2, this calls `save_analysis` EXACTLY ONCE, scope `"all"`.
-5. If `list_changed_scopes`/`get_cached_scope_analysis`/`get_audit_data` error for the whole
-   request, skip it — do not call `save_analysis`.
+   cached results. Same rule as Bucket 2: synthesis only decides the merged `{summary, findings,
+   data_gaps}` for scope `"all"` — it does NOT call `save_analysis` itself.
+5. **Saving — same discipline as Bucket 2 step 3-5, even though it's only one call.** Spawn one save
+   subagent (Part 5 template) for scope `"all"`. Read its raw response yourself; confirm a non-null
+   `requestId`; retry once if not; report honestly if it still fails. Confirm with one final
+   `list_pending_requests` check that this request is no longer pending.
+6. If `list_changed_scopes`/`get_cached_scope_analysis`/`get_audit_data` error for the whole
+   request, skip it — do not spawn a save subagent for it at all.
 
 ---
 
@@ -144,7 +178,16 @@ You are the synthesis step of a parallel Azure audit. {N} agents each analyzed o
 isolation and returned candidate findings. Your job is what they could NOT do alone: look at
 everything together, decide what's real, and produce the final report(s).
 
-You are an independent context — you have been given the MCP endpoint/auth below directly.
+**Your job ends at deciding findings. You do NOT call save_analysis, and you should not attempt any
+tool call whose name is save_analysis under any circumstance.** A separate step, run by the agent
+that spawned you, handles saving — one focused call per scope, checked individually. This split
+exists because a previous version of this workflow had synthesis make many sequential save calls
+itself, and it silently failed to complete some of them while still reporting success. Your only
+output is the structured decision below — nothing else, and no tool call beyond get_audit_data /
+get_audit_history if you need to verify something.
+
+You are an independent context — you have been given the MCP endpoint/auth below directly, for
+read-only verification calls only (get_audit_data, get_audit_history).
 
 MCP server endpoint: https://dashboard-eight-rho-42.vercel.app/api/mcp
 Auth header: Authorization: Bearer <MCP_BEARER_TOKEN>
@@ -191,17 +234,45 @@ across multiple prior audits.
    don't duplicate.
 3. Merge every agent's data_gaps into one list, plus anything you discovered yourself.
 4. Prefer few, well-evidenced findings over many shallow ones.
-5. Save the result(s):
-   - If this is Bucket 2 (grouped daily case): decide final findings SEPARATELY per scope, call
-     save_analysis ONCE PER SCOPE in the group — N scopes in, N save_analysis calls out. Attribute
-     each cross-type chain finding to ONE scope only (its entry point).
-   - If this is Bucket 3 (manual "all"): call save_analysis EXACTLY ONCE, scope "all", with the
-     fully merged summary/findings/data_gaps.
+5. Return your decision as your final answer — do NOT save anything yourself:
+   - If this is Bucket 2 (grouped daily case): one object per scope in the group —
+     [{"scope": "...", "summary": "...", "findings": [...], "data_gaps": [...]}, ...]. Attribute
+     each cross-type chain finding to ONE scope only (its entry point), never duplicated.
+   - If this is Bucket 3 (manual "all"): one object — {"scope": "all", "summary": "...",
+     "findings": [...], "data_gaps": [...]} — the fully merged result.
 ```
 
 ---
 
-## Part 4 — Related-types map (spec 13, finalized 2026-07-15)
+## Part 5 — Save subagent template (one per scope, spawned by the top-level agent, run in `parallel()`)
+
+> Deliberately tiny and single-purpose — its only job is one `save_analysis` call, so there's nothing
+> for it to lose track of. The top-level agent (not this subagent, and not the synthesis subagent)
+> is responsible for reading its actual raw response and deciding whether the save really succeeded.
+
+```
+You have exactly ONE job: make one save_analysis call and report back the raw result. Do not
+analyze, judge, or modify anything — the findings below are already final.
+
+MCP server endpoint: https://dashboard-eight-rho-42.vercel.app/api/mcp
+Auth header: Authorization: Bearer <MCP_BEARER_TOKEN>
+
+Write this exact payload to a file with a heredoc (do not inline complex JSON in a -d flag, to avoid
+shell-quoting bugs), then curl it:
+
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"save_analysis","arguments":{"auditId":"{AUDIT_ID}","scope":"{SCOPE}","summary":{SUMMARY_JSON},"findings":{FINDINGS_JSON},"model":"claude-code-orchestrator","data_gaps":{DATA_GAPS_JSON}}}}
+
+curl -s -X POST https://dashboard-eight-rho-42.vercel.app/api/mcp -H "Authorization: Bearer <MCP_BEARER_TOKEN>" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d @payload.json
+
+Return ONLY the exact raw text curl printed, as your final answer, verbatim. Do not summarize it, do
+not describe what happened, do not say "saved successfully" in your own words — return the literal
+response text and nothing else. If curl itself fails to connect/times out, return exactly:
+{"curl_error": "<the actual error>"}
+```
+
+---
+
+## Part 6 — Related-types map (spec 13, finalized 2026-07-15)
 
 - **Universal context for EVERY specialist** (always include): `iam`, `keyvault`, `resourcegroup`,
   `inventory` — nearly every Stage-3 chain passes through identity/Key Vault regardless of entry point.
@@ -217,10 +288,14 @@ across multiple prior audits.
 
 ## Deployment checklist
 
-- [ ] Confirm the current `MCP_BEARER_TOKEN` value before deploying — do not reuse a stale copy.
-- [ ] Routine `allowed_tools` must be `["Bash", "Workflow"]`.
-- [ ] Routine's stored prompt (see `spec/agent/routine-prompt.md`) should just point here via `cat`,
+- [x] Confirm the current `MCP_BEARER_TOKEN` value before deploying — do not reuse a stale copy.
+- [x] Routine `allowed_tools` must be `["Bash", "Workflow"]`.
+- [x] Routine's stored prompt (see `spec/agent/routine-prompt.md`) should just point here via `cat`,
       not inline this whole file's content again.
+- [x] Split saving into its own per-scope, individually-verified step (Part 5) — fixes the 2026-08-03
+      incident where synthesis silently didn't complete 3 of 13 sequential save calls.
+- [x] `save_analysis`'s MCP response now includes an explicit `warning` when no matching pending
+      request was found, instead of implying uniform success (`dashboard/app/api/mcp/tools.ts`).
 - [ ] Roll out incrementally: a few real scopes first, then roughly half a day's worth, before
       trusting an unattended full daily batch.
 - [ ] If a real run ever looks stuck, `spec/agent/routine-prompt.md`'s prior single-agent version is

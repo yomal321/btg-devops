@@ -191,7 +191,15 @@ export function registerTools(server: McpServer) {
       await sendSummaryEmailIfAuditComplete(auditId)
       await wakeRoutineIfCostUsageUnblocked(auditId)
 
-      return { content: [{ type: 'text', text: JSON.stringify({ saved: true, requestId: pending?.id ?? null }) }] }
+      // findings/analysis were persisted either way (saveAnalysisResult above didn't throw), but
+      // requestId is only non-null if a matching pending row for this exact auditId+scope existed
+      // to mark done — surface that distinction explicitly instead of implying uniform success,
+      // so a caller can't mistake "no matching request found" for "everything is fine."
+      return { content: [{ type: 'text', text: JSON.stringify({
+        saved: true,
+        requestId: pending?.id ?? null,
+        ...(pending ? {} : { warning: `analysis data was saved, but no pending request found for auditId=${auditId} scope=${scope} — nothing was marked done` }),
+      }) }] }
     }
   )
 }
