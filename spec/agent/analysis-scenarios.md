@@ -13,7 +13,7 @@
 > Build a scenario ONCE here and it serves both. See `spec/agent/deep-research-playbook.md` for the
 > stages and `dashboard/app/api/mcp/tools.ts`'s `findingSchema` for the exact finding field shapes.
 
-//test
+
 
 ## How to write a scenario
 
