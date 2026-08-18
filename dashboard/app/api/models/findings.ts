@@ -95,6 +95,7 @@ export interface PriorFinding {
   resource_type: string
   resource_name: string
   category: string | null
+  affected_resources: string[] | null
   status: string
   first_seen_at: Date
 }
@@ -107,7 +108,7 @@ export interface PriorFinding {
 // can't absorb or resolve findings that belong to a newer one.
 export async function findPriorLiveFindings(auditId: string, scope: string): Promise<PriorFinding[]> {
   const { rows } = await pool.query(
-    `SELECT f.id, f.resource_type, f.resource_name, f.category, f.status, f.first_seen_at
+    `SELECT f.id, f.resource_type, f.resource_name, f.category, f.affected_resources, f.status, f.first_seen_at
      FROM findings f
      JOIN audits a   ON a.id = f.audit_id
      JOIN audits cur ON cur.id = $1

@@ -54,6 +54,13 @@ var ArmTypeToSlug = map[string]string{
 // scoring, savings estimates, or utilization judgments happen here — Claude
 // interprets these numbers alongside the Cost extractor's data later.
 type UsageData struct {
+	// TotalResourcesSampled is how many resources were QUEUED for metric
+	// collection (len(jobs) below), not how many ended up with data in
+	// Metrics — a resource whose Metrics List call errors (e.g. a metric not
+	// supported for its SKU) or returns zero datapoints still counts here
+	// but contributes nothing to Metrics. Expect this to run a little ahead
+	// of the resource count actually visible in Metrics; that gap is
+	// resources genuinely queried but with nothing to report, not a bug.
 	TotalResourcesSampled int               `json:"total_resources_sampled"`
 	PeriodFrom            string            `json:"period_from"`
 	PeriodTo              string            `json:"period_to"`

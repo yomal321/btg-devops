@@ -6,6 +6,7 @@ import { buildUsageGroups, resourceTypeSlug } from './usage'
 import { checklistForType } from './analysisChecklists'
 import { detectZombieSpend, detectSpendSpikes, detectServiceConcentration, detectCostUsageWaste, compareCostPeriods, forecastCost, rollupCostByResourceGroup, rollupCostByTag, detectReservedInstanceCandidates, InventoryDataRaw } from './costInsights'
 import { detectIdleResources, compareUsagePeriods } from './usageInsights'
+import { findingKey } from './findingIdentity'
 import { CostRow, UsageMetricRaw } from '../types'
 
 const DEFAULT_PROVIDER: LLMProvider = 'claude'
@@ -210,13 +211,10 @@ Respond with ONLY a JSON object in this exact shape, no other text:
   }
 }
 
-// Cross-audit identity for a finding. resource_type + resource_name +
-// category is the most stable signal available — the issue TEXT can't be
-// used because the LLM words it slightly differently on every run.
-function findingKey(f: { resource_type?: string | null; resource_name?: string | null; category?: string | null }): string {
-  const norm = (s?: string | null) => (s || '').trim().toLowerCase()
-  return `${norm(f.resource_type)}|${norm(f.resource_name)}|${norm(f.category)}`
-}
+// findingKey (cross-audit identity) lives in findingIdentity.ts — pulled out
+// of this file so it stays unit-testable without dragging in the DB pool
+// this file's other imports touch. See that file's comment for why category
+// and raw resource_name are deliberately excluded from the key.
 
 // Saves one scope's findings with full lifecycle handling:
 //

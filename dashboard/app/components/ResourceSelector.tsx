@@ -16,6 +16,7 @@ const SIGNAL_META: Record<'zombie' | 'spike' | 'idle', { label: string; cls: str
 interface ResourceSelectorProps {
   auditId: string
   resources: ResourceListEntry[]
+  resourcesTruncated: boolean
   currency: string
 }
 
@@ -102,7 +103,7 @@ function TypeRow({
 
 /** Step 1 of the resource drill-down: a type-grouped tree — one row per
  *  resource type, expandable to its individual resources underneath. */
-export function ResourceSelector({ auditId, resources, currency }: ResourceSelectorProps) {
+export function ResourceSelector({ auditId, resources, resourcesTruncated, currency }: ResourceSelectorProps) {
   const router = useRouter()
 
   const grouped = useMemo(() => {
@@ -132,6 +133,11 @@ export function ResourceSelector({ auditId, resources, currency }: ResourceSelec
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
         <Boxes size={15} color="var(--acc)" />
         <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--t1)' }}>Browse by Resource Type</h2>
+        {resourcesTruncated && (
+          <span className="bdg bdg-muted" title="This audit has more distinct resources than are listed below — the list is capped for display.">
+            list truncated
+          </span>
+        )}
       </div>
       <div>
         {grouped.map(g => (

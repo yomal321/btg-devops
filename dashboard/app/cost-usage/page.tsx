@@ -153,7 +153,11 @@ export default function CostUsagePage() {
               <KPICard
                 label="Resources Sampled"
                 value={summary.total_resources_sampled}
-                sub="for usage metrics"
+                sub={
+                  <span title="Counts every resource queried for usage metrics, including any whose metrics call returned no data (e.g. a metric not supported for that SKU) — not all of these necessarily appear in the signals below.">
+                    queued for usage metrics
+                  </span>
+                }
                 accent="violet"
               />
               <KPICard
@@ -188,13 +192,15 @@ export default function CostUsagePage() {
             {hasCost && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <div className="glass" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                  <ZombieSpendList findings={summary.signals.zombie_spend} currency={summary.currency} />
-                  <SpendSpikesList findings={summary.signals.spend_spikes} currency={summary.currency} />
+                  <ZombieSpendList findings={summary.signals.zombie_spend} total={summary.signals.zombie_spend_total} currency={summary.currency} />
+                  <SpendSpikesList findings={summary.signals.spend_spikes} total={summary.signals.spend_spikes_total} currency={summary.currency} />
                 </div>
                 <div className="glass" style={{ padding: '1.25rem' }}>
                   <CostBreakdownTabs
                     byResourceGroup={summary.signals.cost_by_resource_group}
+                    byResourceGroupTotal={summary.signals.cost_by_resource_group_total}
                     byTag={summary.signals.cost_by_tag}
+                    byTagTotal={summary.signals.cost_by_tag_total}
                     currency={summary.currency}
                   />
                 </div>
@@ -203,7 +209,7 @@ export default function CostUsagePage() {
 
             {/* Jump to one resource's own cost/usage/AI-findings page, instead
                 of hunting across the all-resources cards above. */}
-            <ResourceSelector auditId={audit.id} resources={summary.resources} currency={summary.currency} />
+            <ResourceSelector auditId={audit.id} resources={summary.resources} resourcesTruncated={summary.resources_truncated} currency={summary.currency} />
 
             {/* AI Analysis — full width; chat lives in the floating ChatDock */}
             <AnalysisPanel

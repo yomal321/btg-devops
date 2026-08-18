@@ -19,20 +19,29 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   return <p style={{ fontSize: '0.82rem', color: 'var(--t3)', padding: '0.5rem 0' }}>{children}</p>
 }
 
-function SectionHeading({ icon: Icon, title, count }: { icon: React.ComponentType<{ size?: number; color?: string }>; title: string; count: number }) {
+// total is the REAL count before the API's signal cap sliced it down to
+// `count` — shown as "N of M" instead of a bare N whenever it's truncated,
+// so this never silently reads as "that's everything" (a real audit had 47
+// zombie resources with only 20 shown, 45 resource groups with 15 shown).
+function SectionHeading({ icon: Icon, title, count, total }: { icon: React.ComponentType<{ size?: number; color?: string }>; title: string; count: number; total?: number }) {
+  const truncated = total !== undefined && total > count
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.625rem' }}>
       <Icon size={15} color="var(--acc)" />
       <h3 style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--t1)', flex: 1 }}>{title}</h3>
-      {count > 0 && <span className="bdg bdg-muted">{count}</span>}
+      {count > 0 && (
+        <span className="bdg bdg-muted" title={truncated ? `Showing top ${count} of ${total}, sorted by cost` : undefined}>
+          {truncated ? `top ${count} of ${total}` : count}
+        </span>
+      )}
     </div>
   )
 }
 
-export function ZombieSpendList({ findings, currency }: { findings: ZombieSpendFinding[]; currency: string }) {
+export function ZombieSpendList({ findings, total, currency }: { findings: ZombieSpendFinding[]; total: number; currency: string }) {
   return (
     <div>
-      <SectionHeading icon={Ghost} title="Zombie Spend" count={findings.length} />
+      <SectionHeading icon={Ghost} title="Zombie Spend" count={findings.length} total={total} />
       {findings.length === 0 ? (
         <EmptyState>No spend found on resources that no longer exist in this audit&apos;s inventory.</EmptyState>
       ) : (
@@ -58,10 +67,10 @@ export function ZombieSpendList({ findings, currency }: { findings: ZombieSpendF
   )
 }
 
-export function SpendSpikesList({ findings, currency }: { findings: SpendSpikeFinding[]; currency: string }) {
+export function SpendSpikesList({ findings, total, currency }: { findings: SpendSpikeFinding[]; total: number; currency: string }) {
   return (
     <div>
-      <SectionHeading icon={Zap} title="Spend Spikes" count={findings.length} />
+      <SectionHeading icon={Zap} title="Spend Spikes" count={findings.length} total={total} />
       {findings.length === 0 ? (
         <EmptyState>No statistically abnormal cost days detected.</EmptyState>
       ) : (
@@ -95,16 +104,27 @@ export function SpendSpikesList({ findings, currency }: { findings: SpendSpikeFi
 }
 
 export function CostBreakdownTabs({
-  byResourceGroup, byTag, currency,
-}: { byResourceGroup: ResourceGroupCostRollup[]; byTag: TagCostRollup[]; currency: string }) {
+  byResourceGroup, byResourceGroupTotal, byTag, byTagTotal, currency,
+}: {
+  byResourceGroup: ResourceGroupCostRollup[]; byResourceGroupTotal: number
+  byTag: TagCostRollup[]; byTagTotal: number
+  currency: string
+}) {
   const [tab, setTab] = useState<'group' | 'tag'>('group')
   const rows = tab === 'group' ? byResourceGroup : byTag
+  const total = tab === 'group' ? byResourceGroupTotal : byTagTotal
+  const truncated = total > rows.length
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.625rem' }}>
         <Boxes size={15} color="var(--acc)" />
         <h3 style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--t1)', flex: 1 }}>Cost Breakdown</h3>
+        {truncated && (
+          <span className="bdg bdg-muted" title={`Showing top ${rows.length} of ${total}, sorted by cost`}>
+            top {rows.length} of {total}
+          </span>
+        )}
         <div style={{ display: 'flex', gap: '0.25rem' }}>
           {(['group', 'tag'] as const).map(t => (
             <button

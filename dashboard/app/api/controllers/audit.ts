@@ -74,7 +74,7 @@ export async function triggerAuditController() {
 const SIGNAL_MAX_ZOMBIE_SPEND = 20
 const SIGNAL_MAX_SPEND_SPIKES = 20
 const SIGNAL_MAX_IDLE_RESOURCES = 30
-const SIGNAL_MAX_ROLLUP_ROWS = 15
+const SIGNAL_MAX_ROLLUP_ROWS = 30
 const SIGNAL_MAX_RESOURCES = 300
 
 // Builds one row per distinct resource seen in cost rows or usage metrics,
@@ -168,14 +168,26 @@ export async function getCostSummaryController(auditId: string) {
   const zombieSpend = detectZombieSpend(actualRows, inventory)
   const spendSpikes = detectSpendSpikes(actualRows)
   const idleResources = detectIdleResources(usage?.metrics || [])
+  const costByResourceGroup = rollupCostByResourceGroup(actualRows, inventory)
+  const costByTag = rollupCostByTag(actualRows, inventory)
 
+  // Every list here is capped for the UI card (and the LLM's prompt size),
+  // but silently slicing with no indicator reads as "this is everything" —
+  // a real audit had 47 zombie resources (20 shown), 45 resource groups (15
+  // shown) and 101 tag values (15 shown). Each _total carries the real count
+  // so the UI can say "top N of M" instead of implying completeness.
   const signals = {
     zombie_spend: zombieSpend.slice(0, SIGNAL_MAX_ZOMBIE_SPEND),
+    zombie_spend_total: zombieSpend.length,
     spend_spikes: spendSpikes.slice(0, SIGNAL_MAX_SPEND_SPIKES),
+    spend_spikes_total: spendSpikes.length,
     cost_forecast: forecastCost(actualRows),
     idle_resources: idleResources.slice(0, SIGNAL_MAX_IDLE_RESOURCES),
-    cost_by_resource_group: rollupCostByResourceGroup(actualRows, inventory).slice(0, SIGNAL_MAX_ROLLUP_ROWS),
-    cost_by_tag: rollupCostByTag(actualRows, inventory).slice(0, SIGNAL_MAX_ROLLUP_ROWS),
+    idle_resources_total: idleResources.length,
+    cost_by_resource_group: costByResourceGroup.slice(0, SIGNAL_MAX_ROLLUP_ROWS),
+    cost_by_resource_group_total: costByResourceGroup.length,
+    cost_by_tag: costByTag.slice(0, SIGNAL_MAX_ROLLUP_ROWS),
+    cost_by_tag_total: costByTag.length,
   }
 
   const resources = buildResourceList(actualRows, usage?.metrics || [], { zombieSpend, spendSpikes, idleResources })
