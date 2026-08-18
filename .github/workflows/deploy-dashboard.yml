@@ -18,9 +18,12 @@ jobs:
   deploy:
     name: Build and Deploy
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dashboard
+    # No working-directory default: the Vercel CLI must be invoked from the
+    # monorepo ROOT, not from inside dashboard/. The project's own Root
+    # Directory setting (Settings -> Build and Deployment -> "dashboard")
+    # is what tells `vercel build`/`vercel deploy` to descend into the
+    # dashboard folder — running the CLI already cd'd into dashboard/ on top
+    # of that setting makes it look for a nonexistent dashboard/dashboard.
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
