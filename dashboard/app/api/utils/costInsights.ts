@@ -515,20 +515,28 @@ export function rollupCostByResourceGroup(costRows: CostRow[], inventory: Invent
   const lookup = buildResourceInfoLookup(inventory)
   if (!lookup) return []
 
-  const byGroup = new Map<string, { cost: number; resourceNames: Set<string> }>()
+  // Keyed case-insensitively — Azure resource group names are
+  // case-insensitive platform-wide, but different resources' inventory
+  // records can echo the SAME real group back with different casing
+  // depending on which ARM response captured it (e.g. "BistecCare-Ltd-PROD"
+  // on one resource, "bisteccare-ltd-prod" on another). Without this, a real
+  // audit showed the same resource group split into two rollup rows. First
+  // casing seen wins for display.
+  const byGroup = new Map<string, { displayName: string; cost: number; resourceNames: Set<string> }>()
   for (const row of costRows) {
     if (!row.ResourceId) continue
     const name = resourceNameFromId(row.ResourceId).toLowerCase()
-    const rg = lookup.get(name)?.resourceGroup || 'ungrouped'
-    const entry = byGroup.get(rg) || { cost: 0, resourceNames: new Set<string>() }
+    const rgDisplay = lookup.get(name)?.resourceGroup || 'ungrouped'
+    const rgKey = rgDisplay.toLowerCase()
+    const entry = byGroup.get(rgKey) || { displayName: rgDisplay, cost: 0, resourceNames: new Set<string>() }
     entry.cost += row.Cost
     entry.resourceNames.add(name)
-    byGroup.set(rg, entry)
+    byGroup.set(rgKey, entry)
   }
 
-  return Array.from(byGroup.entries())
-    .map(([resource_group, { cost, resourceNames }]) => ({
-      resource_group,
+  return Array.from(byGroup.values())
+    .map(({ displayName, cost, resourceNames }) => ({
+      resource_group: displayName,
       total_cost_usd: Math.round(cost * 100) / 100,
       resource_count: resourceNames.size,
     }))
@@ -546,31 +554,35 @@ export function rollupCostByTag(costRows: CostRow[], inventory: InventoryDataRaw
   const lookup = buildResourceInfoLookup(inventory)
   if (!lookup) return []
 
-  const byTag = new Map<string, { cost: number; resourceNames: Set<string> }>()
+  // Keyed case-insensitively for the same reason as rollupCostByResourceGroup
+  // above — tag keys/values are free text set by whoever created each
+  // resource, so "Environment"/"environment" or "Prod"/"prod" on different
+  // resources are almost always meant to be the same tag. A real audit had
+  // 9 such collisions (Environment/environment, Owner/owner, ManagedBy
+  // Terraform/terraform, ...) each silently splitting one tag's cost across
+  // two rollup rows. First casing seen wins for display.
+  const byTag = new Map<string, { displayKey: string; displayValue: string; cost: number; resourceNames: Set<string> }>()
   for (const row of costRows) {
     if (!row.ResourceId) continue
     const name = resourceNameFromId(row.ResourceId).toLowerCase()
     const tags = lookup.get(name)?.tags
     if (!tags) continue
     for (const [key, value] of Object.entries(tags)) {
-      const tagKey = `${key}::${value}`
-      const entry = byTag.get(tagKey) || { cost: 0, resourceNames: new Set<string>() }
+      const tagKeyNorm = `${key.toLowerCase()}::${String(value).toLowerCase()}`
+      const entry = byTag.get(tagKeyNorm) || { displayKey: key, displayValue: value, cost: 0, resourceNames: new Set<string>() }
       entry.cost += row.Cost
       entry.resourceNames.add(name)
-      byTag.set(tagKey, entry)
+      byTag.set(tagKeyNorm, entry)
     }
   }
 
-  return Array.from(byTag.entries())
-    .map(([tagKey, { cost, resourceNames }]) => {
-      const [tag_key, tag_value] = tagKey.split('::')
-      return {
-        tag_key,
-        tag_value,
-        total_cost_usd: Math.round(cost * 100) / 100,
-        resource_count: resourceNames.size,
-      }
-    })
+  return Array.from(byTag.values())
+    .map(({ displayKey, displayValue, cost, resourceNames }) => ({
+      tag_key: displayKey,
+      tag_value: displayValue,
+      total_cost_usd: Math.round(cost * 100) / 100,
+      resource_count: resourceNames.size,
+    }))
     .sort((a, b) => b.total_cost_usd - a.total_cost_usd)
 }
 

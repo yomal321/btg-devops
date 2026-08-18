@@ -235,11 +235,16 @@ export interface ResourceTypeSummary {
 // functions themselves stay uncapped since the LLM path also uses them.
 export interface CostUsageSignals {
   zombie_spend: ZombieSpendFinding[]
+  zombie_spend_total: number
   spend_spikes: SpendSpikeFinding[]
+  spend_spikes_total: number
   cost_forecast: CostForecast | null
   idle_resources: IdleResourceFinding[]
+  idle_resources_total: number
   cost_by_resource_group: ResourceGroupCostRollup[]
+  cost_by_resource_group_total: number
   cost_by_tag: TagCostRollup[]
+  cost_by_tag_total: number
 }
 
 export interface UsageSummary {
